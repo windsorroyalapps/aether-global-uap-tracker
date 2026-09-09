@@ -94,12 +94,23 @@ jobs:
 
   ios-ipa:
     name: iOS IPA
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
       - name: Stamp console URL
         run: printf '%s\n' "$AETHER_APP_URL" > native/app-url.txt
+
+      - name: Select Xcode 16
+        run: |
+          ls /Applications | grep -i xcode || true
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer 2>/dev/null \
+            || sudo xcode-select -s /Applications/Xcode_16.3.app/Contents/Developer 2>/dev/null \
+            || sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer 2>/dev/null \
+            || sudo xcode-select -s /Applications/Xcode_16.1.app/Contents/Developer 2>/dev/null \
+            || sudo xcode-select -s /Applications/Xcode_16.0.app/Contents/Developer 2>/dev/null \
+            || sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -116,6 +127,7 @@ jobs:
             -project Aether.xcodeproj \
             -scheme Aether \
             -configuration Release \
+            -sdk iphonesimulator \
             -destination "generic/platform=iOS Simulator" \
             -derivedDataPath build \
             AETHER_APP_URL="$URL" \

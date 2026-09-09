@@ -1,6 +1,7 @@
 package app.aether.tracker
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.graphics.Color
 import android.os.Bundle
 import android.view.ViewGroup
@@ -9,10 +10,8 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
-import androidx.activity.ComponentActivity
-import androidx.activity.OnBackPressedCallback
 
-class MainActivity : ComponentActivity() {
+class MainActivity : Activity() {
     private lateinit var webView: WebView
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -38,15 +37,11 @@ class MainActivity : ComponentActivity() {
             loadUrl(BuildConfig.APP_URL)
         }
         setContentView(webView)
+    }
 
-        onBackPressedDispatcher.addCallback(
-            this,
-            object : OnBackPressedCallback(true) {
-                override fun handleOnBackPressed() {
-                    if (webView.canGoBack()) webView.goBack() else finish()
-                }
-            },
-        )
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (webView.canGoBack()) webView.goBack() else super.onBackPressed()
     }
 
     override fun onDestroy() {
