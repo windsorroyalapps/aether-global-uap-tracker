@@ -4,6 +4,7 @@ import {
   type JWK,
   type JWTVerifyGetKey,
 } from "jose";
+import { env, isWorkspacePreview } from "../env.server.ts";
 
 export const GATE_IDENTITY_HEADER = "x-grok-identity";
 export const GATE_JWKS_PATH = "/__gate/identity-key";
@@ -25,18 +26,13 @@ export type GateJwks = { keys: JWK[] };
 
 export type JwksFetch = (url: string) => Promise<GateJwks | null>;
 
-function env(key: string): string | undefined {
-  const v = process.env[key]?.trim();
-  return v || undefined;
-}
-
 export function gateIdentityEnabled(): boolean {
   return env("VITE_AUTH_ENABLED") !== "false";
 }
 
 export function gateTokenAudience(): string {
-  const projectId = env("GROK_PROJECT_ID");
-  return projectId ? `app:${projectId}` : PREVIEW_AUDIENCE;
+  if (isWorkspacePreview()) return PREVIEW_AUDIENCE;
+  return `app:${env("GROK_PROJECT_ID")}`;
 }
 
 async function defaultJwksFetch(url: string): Promise<GateJwks | null> {
@@ -133,7 +129,7 @@ export function resolveGateEndpoints(headers: Headers): GateEndpoints | null {
     return { issuer: origin, jwksUrl: `${origin}${GATE_JWKS_PATH}` };
   }
 
-  if (!env("GROK_PROJECT_ID")) {
+  if (isWorkspacePreview()) {
     return {
       issuer: PREVIEW_GATE_ORIGIN,
       jwksUrl: `${PREVIEW_GATE_ORIGIN}${GATE_JWKS_PATH}`,

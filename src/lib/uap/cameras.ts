@@ -73,6 +73,7 @@ function toHit(cam: ResolvedCam, id: string, lat: number, lng: number, altM: num
     kind: cam.kind,
     elevationDeg,
     losScore,
+    spectrum: cam.spectrum ?? (cam.kind === "space" ? "geocolor" : "visible"),
   };
 }
 
@@ -347,7 +348,9 @@ export async function camerasNear(
   }
   ground.sort((a, b) => b.losScore - a.losScore || a.distanceKm - b.distanceKm);
   space.sort((a, b) => a.distanceKm - b.distanceKm);
-  return { ground: ground.slice(0, 24), space: space.slice(0, 4), total: ground.length };
+  const ir = space.filter((s) => s.spectrum === "infrared").slice(0, 3);
+  const vis = space.filter((s) => s.spectrum !== "infrared").slice(0, 3);
+  return { ground: ground.slice(0, 24), space: [...ir, ...vis].slice(0, 6), total: ground.length };
 }
 
 export async function snapshotFor(id: string): Promise<{ mime: string; b64: string } | null> {

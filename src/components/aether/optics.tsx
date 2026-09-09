@@ -7,7 +7,7 @@ import { getCameraFrame, getWatchContext } from "@/lib/uap/live";
 import type { CameraHit, Contact } from "@/lib/uap/types";
 import { cn } from "@/lib/utils";
 
-export function OpticalPanel({ contact }: { contact: Contact | null }) {
+export function OpticalPanel({ contact, hideHeader = false }: { contact: Contact | null; hideHeader?: boolean }) {
   const ctx = useQuery({
     queryKey: ["watch", contact?.id],
     enabled: Boolean(contact),
@@ -67,14 +67,22 @@ export function OpticalPanel({ contact }: { contact: Contact | null }) {
   const sky = data.skyBodies.filter((b) => b.el > 5);
 
   return (
-    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-      <div>
-        <p className="font-display text-base font-semibold leading-snug">{contact.locationLabel}</p>
-        <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
+    <div className={hideHeader ? "space-y-4 p-4" : "min-h-0 flex-1 space-y-4 overflow-y-auto p-4"}>
+      {!hideHeader && (
+        <div>
+          <p className="font-display text-base font-semibold leading-snug">{contact.locationLabel}</p>
+          <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
+            Residual {data.residual}% · {data.cameraTotal} cameras in range · {data.aircraft.length}{" "}
+            tracks · {data.balloons.length} sondes
+          </p>
+        </div>
+      )}
+      {hideHeader && (
+        <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
           Residual {data.residual}% · {data.cameraTotal} cameras in range · {data.aircraft.length}{" "}
           tracks · {data.balloons.length} sondes
         </p>
-      </div>
+      )}
 
       <div className="rounded-xl border border-border bg-bg p-3">
         <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">
@@ -260,10 +268,19 @@ function CameraCard({ cam }: { cam: CameraHit }) {
       <figcaption className="space-y-1 p-2.5">
         <div className="flex items-start justify-between gap-2">
           <p className="text-xs font-medium leading-snug">{cam.name}</p>
-          {cam.facing ? <Badge variant="live">Facing</Badge> : <Badge>Oblique</Badge>}
+          {cam.spectrum === "infrared" ? (
+            <Badge variant="watch">IR</Badge>
+          ) : cam.spectrum === "geocolor" ? (
+            <Badge variant="live">GEO</Badge>
+          ) : cam.facing ? (
+            <Badge variant="live">Facing</Badge>
+          ) : (
+            <Badge>Oblique</Badge>
+          )}
         </div>
         <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
           {cam.network} · {kmLabel(cam.distanceKm)} · el {cam.elevationDeg.toFixed(0)}° · {cam.kind}
+          {cam.spectrum === "infrared" ? " · IR" : ""}
         </p>
         {cam.pageUrl && (
           <a

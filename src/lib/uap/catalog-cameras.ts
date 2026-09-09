@@ -1,3 +1,5 @@
+export type Spectrum = "visible" | "infrared" | "geocolor";
+
 export type CatalogCam = {
   id: string;
   name: string;
@@ -9,6 +11,7 @@ export type CatalogCam = {
   pageUrl: string;
   azimuth: number | null;
   viewKm: number;
+  spectrum?: Spectrum;
 };
 
 function goes(
@@ -19,8 +22,10 @@ function goes(
   lat: number,
   lng: number,
   viewKm: number,
+  band = "GEOCOLOR",
+  spectrum: Spectrum = "geocolor",
 ): CatalogCam {
-  const host = `https://cdn.star.nesdis.noaa.gov/GOES${sat}/ABI/${path}/GEOCOLOR/thumbnail.jpg`;
+  const host = `https://cdn.star.nesdis.noaa.gov/GOES${sat}/ABI/${path}/${band}/thumbnail.jpg`;
   return {
     id,
     name,
@@ -32,6 +37,7 @@ function goes(
     pageUrl: `https://www.star.nesdis.noaa.gov/goes/index.php`,
     azimuth: null,
     viewKm,
+    spectrum,
   };
 }
 
@@ -49,6 +55,15 @@ export const CATALOG_CAMERAS: CatalogCam[] = [
   goes("16", "SECTOR/pr", "goes-pr", "GOES-16 Puerto Rico", 18.2, -66.5, 900),
   goes("18", "SECTOR/hi", "goes-hi", "GOES-18 Hawaii", 21.3, -157.8, 1200),
   goes("18", "SECTOR/ak", "goes-ak", "GOES-18 Alaska", 64, -150, 1800),
+  goes("16", "CONUS", "goes-east-ir", "GOES-16 CONUS IR 10.3 µm", 38, -97, 4000, "13", "infrared"),
+  goes("18", "CONUS", "goes-west-ir", "GOES-18 CONUS IR 10.3 µm", 40, -118, 4000, "13", "infrared"),
+  goes("16", "FD", "goes-east-ir-fd", "GOES-16 East IR full disk", 0, -75.2, 12000, "13", "infrared"),
+  goes("18", "FD", "goes-west-ir-fd", "GOES-18 West IR full disk", 0, -137.2, 12000, "13", "infrared"),
+  goes("16", "CONUS", "goes-east-swir", "GOES-16 CONUS shortwave IR", 38, -97, 4000, "07", "infrared"),
+  goes("16", "SECTOR/ne", "goes-ne-ir", "GOES-16 Northeast IR", 41.5, -72, 1600, "13", "infrared"),
+  goes("16", "SECTOR/se", "goes-se-ir", "GOES-16 Southeast IR", 30, -82, 1600, "13", "infrared"),
+  goes("18", "SECTOR/hi", "goes-hi-ir", "GOES-18 Hawaii IR", 21.3, -157.8, 1200, "13", "infrared"),
+  goes("18", "SECTOR/ak", "goes-ak-ir", "GOES-18 Alaska IR", 64, -150, 1800, "13", "infrared"),
   {
     id: "himawari",
     name: "Himawari-9 full disk",

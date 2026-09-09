@@ -127,6 +127,21 @@ export async function fetchFireballs() {
       const energy = Number(row[idx.energy] ?? 0);
       const alt = row[idx.alt] == null ? null : Number(row[idx.alt]) * 1000;
       const vel = row[idx.vel] == null ? null : Number(row[idx.vel]);
+      const vx = row[idx.vx] == null ? null : Number(row[idx.vx]);
+      const vy = row[idx.vy] == null ? null : Number(row[idx.vy]);
+      const vz = row[idx.vz] == null ? null : Number(row[idx.vz]);
+      let headingDeg: number | null = null;
+      let verticalFpm: number | null = null;
+      if (vx != null && vy != null && vz != null && Number.isFinite(vx + vy + vz)) {
+        const φ = (lat * Math.PI) / 180;
+        const λ = (lng * Math.PI) / 180;
+        const east = -Math.sin(λ) * vx + Math.cos(λ) * vy;
+        const north =
+          -Math.sin(φ) * Math.cos(λ) * vx - Math.sin(φ) * Math.sin(λ) * vy + Math.cos(φ) * vz;
+        const up = Math.cos(φ) * Math.cos(λ) * vx + Math.cos(φ) * Math.sin(λ) * vy + Math.sin(φ) * vz;
+        headingDeg = (((Math.atan2(east, north) * 180) / Math.PI) + 360) % 360;
+        verticalFpm = up * 1000 * 196.85;
+      }
       const id = hashId(`fb:${date}:${lat}:${lng}`);
       out.push({
         id,
@@ -146,6 +161,8 @@ export async function fetchFireballs() {
         stream: "NASA CNEOS",
         altitudeM: alt,
         speedKts: vel ? vel * 1943.8 : null,
+        headingDeg,
+        verticalFpm,
         residual: energy > 20 ? 40 : 18,
         reasons: ["bolide / atmospheric entry"],
         url: "https://cneos.jpl.nasa.gov/fireballs/",

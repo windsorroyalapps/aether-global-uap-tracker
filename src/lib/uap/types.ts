@@ -48,15 +48,30 @@ export type Sighting = {
   createdAt: string;
 };
 
+export type LiveVerdict = {
+  contactId: number;
+  verdict: "prosaic" | "watch" | "uap-candidate";
+  confidence: number;
+  likelyOrigin: string;
+  assessment: string;
+  threat: "none" | "watch" | "elevated";
+  opticalNotes: string;
+  framesUsed: number;
+  spectra: string[];
+  at: string;
+};
+
 export type Contact = Sighting & {
   live: boolean;
   stream?: string;
   altitudeM?: number | null;
   speedKts?: number | null;
+  headingDeg?: number | null;
   verticalFpm?: number | null;
   residual?: number | null;
   reasons?: string[];
   url?: string | null;
+  liveVerdict?: LiveVerdict | null;
 };
 
 export type Analysis = {
@@ -155,6 +170,7 @@ export type CameraHit = {
   kind: "sky" | "traffic" | "airport" | "coast" | "space";
   elevationDeg: number;
   losScore: number;
+  spectrum: "visible" | "infrared" | "geocolor";
 };
 
 export type SpaceWeather = {
@@ -232,4 +248,5 @@ export type LivePicture = {
   spaceWeather: SpaceWeather;
   flare: SolarFlare | null;
   streams: StreamHealth[];
+  verdicts: LiveVerdict[];
 };

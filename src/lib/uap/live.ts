@@ -22,6 +22,7 @@ import {
   health,
   sampleAircraft,
 } from "./streams";
+import { allVerdicts, attachVerdicts, compactContact, sweepContacts } from "./live-sensor";
 import type { Contact, LivePicture, StreamHealth, WatchContext } from "./types";
 
 function settled<T>(r: PromiseSettledResult<T>, fallback: T): T {
@@ -86,15 +87,31 @@ export async function buildLivePicture(): Promise<LivePicture> {
       balloons.length > 0 ? `${balloons.length} sondes` : "no telemetry",
       balloons.length,
     ),
-    health("optical", "Public optics", true, "Wildfire PTZ · DOT 511 · TfL · NESDIS"),
+    health("optical", "Public optics", true, "Visual · GOES IR · wildfire PTZ · 511"),
   ];
 
-  const detections = dedupeContacts([
-    ...detectionsFromAircraft(adsb.aircraft),
-    ...fireballs,
-    ...social,
-    ...balloonDetections,
-  ]);
+  const detections = attachVerdicts(
+    dedupeContacts([
+      ...detectionsFromAircraft(adsb.aircraft),
+      ...fireballs,
+      ...social,
+      ...balloonDetections,
+    ]),
+  );
+  const verdicts = allVerdicts().filter((v) => detections.some((d) => d.id === v.contactId));
+  streams.push(
+    health(
+      "live-ai",
+      "Live AI",
+      Boolean(process.env.XAI_API_KEY),
+      process.env.XAI_API_KEY
+        ? verdicts.length
+          ? `${verdicts.length} scored`
+          : "armed"
+        : "key missing",
+      verdicts.length,
+    ),
+  );
 
   return {
     fetchedAt: new Date().toISOString(),
@@ -106,12 +123,17 @@ export async function buildLivePicture(): Promise<LivePicture> {
     spaceWeather: sw,
     flare,
     streams,
+    verdicts,
   };
 }
 
 export const getLivePicture = createServerFn({ method: "GET" }).handler(
   async (): Promise<LivePicture> => buildLivePicture(),
 );
+
+export const sweepLiveSensors = createServerFn({ method: "POST" })
+  .validator((input: { items: ReturnType<typeof compactContact>[] }) => input)
+  .handler(async ({ data }) => sweepContacts(data.items.slice(0, 8)));
 
 export const getWatchContext = createServerFn({ method: "POST" })
   .validator(

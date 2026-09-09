@@ -76,3 +76,44 @@ export function kmLabel(km: number) {
   if (km < 10) return `${km.toFixed(1)} km`;
   return `${Math.round(km)} km`;
 }
+
+const CARDINAL = [
+  "N",
+  "NNE",
+  "NE",
+  "ENE",
+  "E",
+  "ESE",
+  "SE",
+  "SSE",
+  "S",
+  "SSW",
+  "SW",
+  "WSW",
+  "W",
+  "WNW",
+  "NW",
+  "NNW",
+];
+
+export function formatHeading(deg: number | null | undefined) {
+  if (deg == null || !Number.isFinite(deg)) return null;
+  const wrapped = ((deg % 360) + 360) % 360;
+  const i = Math.round(wrapped / 22.5) % 16;
+  return `${Math.round(wrapped)}° ${CARDINAL[i]}`;
+}
+
+export function formatSpeed(kts: number | null | undefined) {
+  if (kts == null || !Number.isFinite(kts)) return null;
+  const ms = kts * 0.514444;
+  if (ms >= 800) return `${(ms / 1000).toFixed(1)} km/s`;
+  const kmh = kts * 1.852;
+  return `${Math.round(kts)} kts · ${Math.round(kmh)} km/h`;
+}
+
+export function formatVertical(fpm: number | null | undefined) {
+  if (fpm == null || !Number.isFinite(fpm)) return null;
+  const ms = fpm * 0.00508;
+  const dir = fpm > 40 ? "climbing" : fpm < -40 ? "descending" : "level";
+  return `${Math.round(fpm)} fpm ${dir} · ${ms.toFixed(1)} m/s`;
+}

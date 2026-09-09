@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getSql } from "@/lib/db";
 import { buildLivePicture } from "./live";
-import { mapSighting, type Analysis, type SightingRow } from "./types";
+import { mapSighting, type Analysis, type Classification, type Shape, type Source, type SightingRow } from "./types";
 
 type AnalysisRow = {
   id: number;
@@ -154,6 +154,10 @@ export const analyzeLiveEvent = createServerFn({ method: "POST" })
       source: string;
       residual?: number | null;
       fusion?: string;
+      heading?: string | null;
+      speed?: string | null;
+      vertical?: string | null;
+      origin?: string | null;
     }) => input,
   )
   .handler(async ({ data }): Promise<Analysis | { error: string }> => {
@@ -169,20 +173,24 @@ export const analyzeLiveEvent = createServerFn({ method: "POST" })
       body: JSON.stringify({
         model: "grok-4.5",
         temperature: 0.3,
-        max_tokens: 380,
+        max_tokens: 460,
         messages: [
           {
             role: "system",
             content:
-              "You are a cautious UAP intelligence analyst. Prefer prosaic explanations. Never claim extraterrestrial origin as fact. JSON only.",
+              "You are a cautious UAP intelligence analyst. Prefer prosaic explanations. Never claim extraterrestrial origin as fact. The nearest star/galaxy is a geometric sky-radiant reference from the reverse flight path, not proof of an interstellar launch. JSON only.",
           },
           {
             role: "user",
-            content: `Assess this LIVE fused contact. JSON keys: assessment (3-5 sentences), likely_origin, threat (none|watch|elevated).
+            content: `Assess this LIVE fused contact. If residual > 50 after prosaic checks, explain WHY it still scores as a UAP candidate (kinematics, lack of correlators). JSON keys: assessment (3-5 sentences), likely_origin, threat (none|watch|elevated).
 Label: ${data.label}
 Lat/lng: ${data.lat.toFixed(2)}, ${data.lng.toFixed(2)}
 Source: ${data.source}
-Residual score: ${data.residual ?? "n/a"}
+Residual / UAP chance: ${data.residual ?? "n/a"}
+Heading: ${data.heading ?? "unknown"}
+Velocity: ${data.speed ?? "unknown"}
+Vertical: ${data.vertical ?? "unknown"}
+Sky radiant (reverse track): ${data.origin ?? "n/a"}
 Narrative: ${data.summary}
 Fusion: ${data.fusion ?? "none"}`,
           },
@@ -202,6 +210,72 @@ Fusion: ${data.fusion ?? "none"}`,
       threat: parsed.threat,
       createdAt: new Date().toISOString(),
     };
+  });
+
+export const fileUapAssessment = createServerFn({ method: "POST" })
+  .validator(
+    (input: {
+      lat: number;
+      lng: number;
+      locationLabel: string;
+      region: string;
+      summary: string;
+      shape: string;
+      source: string;
+      confidence: number;
+      assessment: string;
+      likelyOrigin: string;
+      threat: Analysis["threat"];
+    }) => input,
+  )
+  .handler(async ({ data }): Promise<{ sightingId: number; analysis: Analysis } | { error: string }> => {
+    const sql = await getSql();
+    const existing = await sql<SightingRow>`
+      select
+        id, lat, lng, location_label, region,
+        occurred_at::text as occurred_at,
+        shape, duration_sec, summary, classification, confidence, source,
+        created_at::text as created_at
+      from sightings
+      where abs(lat - ${data.lat}) < 0.2
+        and abs(lng - ${data.lng}) < 0.2
+        and location_label = ${data.locationLabel.slice(0, 80)}
+        and occurred_at > now() - interval '6 hours'
+      order by occurred_at desc
+      limit 1
+    `;
+    let sightingId = existing[0]?.id;
+    const classification: Classification = data.confidence > 70 ? "anomalous" : "unidentified";
+    const shape = data.shape as Shape;
+    const source = (data.source === "field-report" ? "field-report" : "sensor") as Source;
+    if (!sightingId) {
+      const inserted = await sql<{ id: number }>`
+        insert into sightings (
+          lat, lng, location_label, region, occurred_at, shape,
+          duration_sec, summary, classification, confidence, source
+        ) values (
+          ${data.lat}, ${data.lng}, ${data.locationLabel.slice(0, 80)}, ${data.region.slice(0, 40)},
+          now(), ${shape}, ${null}, ${data.summary.slice(0, 800)},
+          ${classification}, ${Math.round(data.confidence)}, ${source}
+        )
+        returning id
+      `;
+      sightingId = inserted[0]?.id;
+    }
+    if (!sightingId) return { error: "Could not file contact." };
+    const rows = await sql<AnalysisRow>`
+      insert into analyses (sighting_id, assessment, likely_origin, threat)
+      values (${sightingId}, ${data.assessment.slice(0, 1200)}, ${data.likelyOrigin.slice(0, 160)}, ${data.threat})
+      on conflict (sighting_id) do update set
+        assessment = excluded.assessment,
+        likely_origin = excluded.likely_origin,
+        threat = excluded.threat
+      returning id, sighting_id, assessment, likely_origin, threat,
+                created_at::text as created_at
+    `;
+    const saved = rows[0];
+    if (!saved) return { error: "Could not store assessment." };
+    return { sightingId, analysis: mapAnalysis(saved) };
   });
 
 export const generateBriefing = createServerFn({ method: "POST" }).handler(

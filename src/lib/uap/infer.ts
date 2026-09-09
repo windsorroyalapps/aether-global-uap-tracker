@@ -77,6 +77,7 @@ export function detectionsFromAircraft(list: Aircraft[]): Contact[] {
       stream: "ADS-B (adsb.lol)",
       altitudeM: a.altFt ? a.altFt * 0.3048 : null,
       speedKts: a.gsKts,
+      headingDeg: a.track,
       verticalFpm: a.baroRate,
       residual,
       reasons: scored.reasons,
@@ -209,6 +210,17 @@ export function residualScore(hypotheses: Hypothesis[], base = 62) {
     )
     .reduce((a, h) => a + h.weight, 0);
   return Math.max(8, Math.min(96, Math.round(base - explained * 0.35)));
+}
+
+/** Residual chance this plot is still a UAP after prosaic correlators. */
+export function uapProbability(c: Pick<Contact, "classification" | "confidence" | "residual">) {
+  if (c.classification === "likely-prosaic") return Math.min(c.residual ?? c.confidence, 35);
+  const raw = c.residual ?? c.confidence;
+  return Math.max(0, Math.min(99, Math.round(raw)));
+}
+
+export function isUapCandidate(c: Pick<Contact, "classification" | "confidence" | "residual">) {
+  return uapProbability(c) > 50;
 }
 
 export function dedupeContacts(list: Contact[]) {

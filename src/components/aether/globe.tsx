@@ -3,6 +3,7 @@ import { geoGraticule10, geoOrthographic, geoPath } from "d3-geo";
 import { feature } from "topojson-client";
 import type { GeometryCollection, Topology } from "topojson-specification";
 import landTopo from "world-atlas/land-110m.json";
+import { isUapCandidate, uapProbability } from "@/lib/uap/infer";
 import type { Contact } from "@/lib/uap/types";
 
 type OverlayPt = { lat: number; lng: number };
@@ -28,6 +29,19 @@ function token(name: string, fallback: string) {
   if (typeof document === "undefined") return fallback;
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v || fallback;
+}
+
+function dest(lat: number, lng: number, bearingDeg: number, distKm: number) {
+  const R = 6371;
+  const δ = distKm / R;
+  const θ = (bearingDeg * Math.PI) / 180;
+  const φ1 = (lat * Math.PI) / 180;
+  const λ1 = (lng * Math.PI) / 180;
+  const φ2 = Math.asin(Math.sin(φ1) * Math.cos(δ) + Math.cos(φ1) * Math.sin(δ) * Math.cos(θ));
+  const λ2 =
+    λ1 +
+    Math.atan2(Math.sin(θ) * Math.sin(δ) * Math.cos(φ1), Math.cos(δ) - Math.sin(φ1) * Math.sin(φ2));
+  return { lat: (φ2 * 180) / Math.PI, lng: (((λ2 * 180) / Math.PI + 540) % 360) - 180 };
 }
 
 export function Globe({
@@ -145,6 +159,7 @@ export function Globe({
       const signal = token("--color-signal", "#9eb8ae");
       const alert = token("--color-alert", "#c4897a");
       const watch = token("--color-watch", "#c4b08a");
+      const candidate = token("--color-candidate", "#3dff6a");
 
       projection
         .translate([w / 2, h / 2 + 4])
@@ -274,30 +289,60 @@ export function Globe({
         ctx.restore();
       }
 
+      if (selected && selected.headingDeg != null) {
+        const inbound = (selected.headingDeg + 180) % 360;
+        ctx.beginPath();
+        let started = false;
+        for (let i = 0; i <= 8; i += 1) {
+          const pt = dest(selected.lat, selected.lng, inbound, i * 90);
+          const p = visible(pt.lng, pt.lat, w, h, r);
+          if (!p) continue;
+          if (!started) {
+            ctx.moveTo(p[0], p[1]);
+            started = true;
+          } else ctx.lineTo(p[0], p[1]);
+        }
+        ctx.strokeStyle = `${candidate}aa`;
+        ctx.lineWidth = 1.6;
+        ctx.setLineDash([4, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      ctx.font = "600 10px IBM Plex Mono, ui-monospace, monospace";
+      ctx.textBaseline = "bottom";
+
       for (const s of st.contacts) {
         const p = visible(s.lng, s.lat, w, h, r);
         if (!p) continue;
         const selectedDot = s.id === st.selectedId;
         const hover = s.id === st.hoverId;
-        const color =
-          s.classification === "anomalous"
+        const uap = isUapCandidate(s);
+        const color = uap
+          ? candidate
+          : s.classification === "anomalous"
             ? alert
             : s.classification === "sensor-contact"
               ? signal
               : s.classification === "unidentified"
                 ? watch
                 : muted;
-        const rad = selectedDot ? 4.6 : hover ? 3.6 : s.live ? 3.1 : 2.4;
+        const rad = selectedDot ? 4.8 : hover ? 3.6 : s.live ? 3.1 : 2.4;
         ctx.beginPath();
         ctx.arc(p[0], p[1], rad, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
-        if (selectedDot || hover || s.live) {
+        if (selectedDot || hover || s.live || uap) {
           ctx.beginPath();
-          ctx.arc(p[0], p[1], rad + (s.live && !selectedDot ? 5 : 6), 0, Math.PI * 2);
-          ctx.strokeStyle = `${color}${s.live ? "66" : "99"}`;
-          ctx.lineWidth = 1;
+          ctx.arc(p[0], p[1], rad + (uap ? 7 : s.live && !selectedDot ? 5 : 6), 0, Math.PI * 2);
+          ctx.strokeStyle = `${color}${uap ? "cc" : s.live ? "66" : "99"}`;
+          ctx.lineWidth = uap ? 1.4 : 1;
           ctx.stroke();
+        }
+        if (uap) {
+          const label = `${s.locationLabel.slice(0, 18)}  ${uapProbability(s)}%`;
+          ctx.fillStyle = candidate;
+          ctx.fillText(label, p[0] + 8, p[1] - 6);
         }
       }
 
@@ -383,6 +428,65 @@ export function Globe({
         className="block h-full w-full touch-none"
         aria-label="Global UAP contact globe"
       />
+      <GlobeLegend />
     </div>
+  );
+}
+
+function GlobeLegend() {
+  return (
+    <aside className="pointer-events-none absolute bottom-3 left-3 z-10 w-[168px] rounded-xl border border-border bg-bg/85 p-3 backdrop-blur-sm sm:bottom-4 sm:left-4">
+      <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.16em] text-muted">Legend</p>
+      <ul className="space-y-1.5 text-[11px] text-fg">
+        <LegendRow color="bg-candidate" label="UAP candidate >50%" ring />
+        <LegendRow color="bg-alert" label="Anomalous" />
+        <LegendRow color="bg-watch" label="Unidentified" />
+        <LegendRow color="bg-signal" label="Sensor / live" />
+        <LegendRow color="bg-muted" label="Likely prosaic" />
+        <LegendRow color="bg-accent" label="Satellite / ISS" diamond />
+        <LegendRow color="border-watch" label="Radiosonde" hollow />
+        <LegendRow color="bg-signal" label="Public camera" square />
+        <LegendRow color="bg-muted" label="ADS-B traffic" tiny />
+      </ul>
+    </aside>
+  );
+}
+
+function LegendRow({
+  color,
+  label,
+  ring,
+  diamond,
+  hollow,
+  square,
+  tiny,
+}: {
+  color: string;
+  label: string;
+  ring?: boolean;
+  diamond?: boolean;
+  hollow?: boolean;
+  square?: boolean;
+  tiny?: boolean;
+}) {
+  return (
+    <li className="flex items-center gap-2">
+      <span
+        className={
+          diamond
+            ? `size-2.5 rotate-45 ${color}`
+            : square
+              ? `size-2 rotate-45 ${color}`
+              : hollow
+                ? `size-2.5 rounded-full border ${color}`
+                : tiny
+                  ? `size-1.5 rounded-full ${color}`
+                  : ring
+                    ? `size-2.5 rounded-full ${color} ring-2 ring-candidate/50`
+                    : `size-2.5 rounded-full ${color}`
+        }
+      />
+      <span className="leading-tight text-muted">{label}</span>
+    </li>
   );
 }

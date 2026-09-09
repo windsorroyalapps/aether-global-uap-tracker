@@ -14,6 +14,7 @@
   --color-signal: #9eb8ae;
   --color-watch: #c4b08a;
   --color-alert: #c4897a;
+  --color-candidate: #3dff6a;
 
   --font-display: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
   --font-sans: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
@@ -64,6 +65,10 @@
 
   p {
     text-wrap: pretty;
+  }
+
+  img {
+    max-width: 100%;
   }
 }
 

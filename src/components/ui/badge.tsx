@@ -11,6 +11,7 @@ const badgeVariants = cva(
         live: "border-signal/40 text-signal",
         watch: "border-watch/40 text-watch",
         alert: "border-alert/40 text-alert",
+        candidate: "border-candidate/50 bg-candidate/10 text-candidate",
         solid: "border-transparent bg-raised text-fg",
       },
     },

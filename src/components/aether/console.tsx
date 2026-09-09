@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Globe } from "@/components/aether/globe";
-import { OpticalPanel } from "@/components/aether/optics";
+import { InspectPanel } from "@/components/aether/inspect";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,10 +27,12 @@ import {
   formatWhen,
   sourceLabel,
 } from "@/lib/uap/format";
-import { getLivePicture, getWatchContext } from "@/lib/uap/live";
+import { getLivePicture, getWatchContext, sweepLiveSensors } from "@/lib/uap/live";
+import { compactContact } from "@/lib/uap/live-sensor";
 import { fileReport, listSightings } from "@/lib/uap/queries";
 import { asContact, CLASSIFICATIONS, SHAPES, SOURCES } from "@/lib/uap/types";
-import type { Classification, Contact, Shape, Sighting, Source, StreamHealth } from "@/lib/uap/types";
+import { isUapCandidate, uapProbability } from "@/lib/uap/infer";
+import type { Classification, Contact, LiveVerdict, Shape, Sighting, Source, StreamHealth } from "@/lib/uap/types";
 import { cn } from "@/lib/utils";
 
 type Panel = "feed" | "optical" | "report" | "brief";
@@ -46,7 +48,7 @@ export function Console({ initial }: { initial: Sighting[] }) {
   const live = useQuery({
     queryKey: ["live"],
     queryFn: () => getLivePicture(),
-    refetchInterval: 45_000,
+    refetchInterval: 20_000,
     retry: 1,
   });
 
@@ -65,6 +67,23 @@ export function Console({ initial }: { initial: Sighting[] }) {
     [sightings.data],
   );
   const liveDetections = live.data?.detections ?? [];
+  const sweep = useQuery({
+    queryKey: ["live-sweep", liveDetections.map((c) => c.id).join("-")],
+    enabled: liveDetections.length > 0,
+    queryFn: () =>
+      sweepLiveSensors({
+        data: { items: liveDetections.slice(0, 8).map(compactContact) },
+      }),
+    refetchInterval: 18_000,
+    staleTime: 8_000,
+    retry: 0,
+  });
+  const verdictById = useMemo(() => {
+    const m = new Map<number, LiveVerdict>();
+    for (const v of live.data?.verdicts ?? []) m.set(v.contactId, v);
+    for (const v of sweep.data ?? []) m.set(v.contactId, v);
+    return m;
+  }, [live.data?.verdicts, sweep.data]);
   const contacts = useMemo(() => {
     const merged = [...liveDetections, ...archive];
     const seen = new Set<number>();
@@ -72,10 +91,11 @@ export function Console({ initial }: { initial: Sighting[] }) {
     for (const c of merged) {
       if (seen.has(c.id)) continue;
       seen.add(c.id);
-      out.push(c);
+      const v = verdictById.get(c.id);
+      out.push(v ? { ...c, liveVerdict: v } : c);
     }
     return out;
-  }, [archive, liveDetections]);
+  }, [archive, liveDetections, verdictById]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -96,6 +116,20 @@ export function Console({ initial }: { initial: Sighting[] }) {
   }, [contacts, klass, query, epoch, source]);
 
   const selected = contacts.find((s) => s.id === selectedId) ?? null;
+  const autoOpened = useRef<Set<number>>(new Set());
+
+  useEffect(() => {
+    for (const v of verdictById.values()) {
+      if (v.verdict !== "uap-candidate" || autoOpened.current.has(v.contactId)) continue;
+      autoOpened.current.add(v.contactId);
+      if (selectedId == null) {
+        setSelectedId(v.contactId);
+        setPanel("optical");
+      }
+      toast("Live AI flagged a UAP candidate");
+      break;
+    }
+  }, [verdictById, selectedId]);
 
   const stats = useMemo(() => {
     const anomalous = contacts.filter((s) => s.classification === "anomalous").length;
@@ -180,6 +214,14 @@ export function Console({ initial }: { initial: Sighting[] }) {
       </header>
 
       <StreamRail streams={live.data?.streams ?? []} />
+      <LiveSensorRail
+        verdicts={[...verdictById.values()]}
+        pending={sweep.isFetching}
+        onOpen={(id) => {
+          setSelectedId(id);
+          setPanel("optical");
+        }}
+      />
 
       <section className="grid grid-cols-2 gap-px border-b border-border bg-border sm:grid-cols-4">
         <Stat label="Fused contacts" value={stats.total} />
@@ -200,7 +242,7 @@ export function Console({ initial }: { initial: Sighting[] }) {
               selectedId={selected?.id ?? null}
               onSelect={(id) => {
                 setSelectedId(id);
-                setPanel("feed");
+                setPanel("optical");
               }}
               pickMode={pickMode}
               onPick={onPick}
@@ -214,7 +256,7 @@ export function Console({ initial }: { initial: Sighting[] }) {
           )}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-between p-3 sm:p-4">
             <p className="pointer-events-auto rounded-md border border-border bg-bg/80 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
-              {pickMode ? "Tap globe to lock coordinates" : "Drag to rotate · tap a contact"}
+              {pickMode ? "Tap globe to lock coordinates" : "Drag · tap a contact for optics + report"}
             </p>
             <p className="rounded-md border border-border bg-bg/80 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
               {live.data?.iss
@@ -231,7 +273,7 @@ export function Console({ initial }: { initial: Sighting[] }) {
             {(
               [
                 ["feed", "Contacts"],
-                ["optical", "Optics"],
+                ["optical", "Inspect"],
                 ["report", "Report"],
                 ["brief", "Intel"],
               ] as const
@@ -264,11 +306,12 @@ export function Console({ initial }: { initial: Sighting[] }) {
               selected={selected}
               onSelect={(id) => {
                 setSelectedId(id);
+                setPanel("optical");
               }}
               onOpenOptics={() => setPanel("optical")}
             />
           )}
-          {panel === "optical" && <OpticalPanel contact={selected} />}
+          {panel === "optical" && <InspectPanel contact={selected} />}
           {panel === "report" && (
             <ReportForm
               pick={pick}
@@ -285,6 +328,60 @@ export function Console({ initial }: { initial: Sighting[] }) {
           {panel === "brief" && <BriefingPanel />}
         </aside>
       </div>
+    </div>
+  );
+}
+
+function LiveSensorRail({
+  verdicts,
+  pending,
+  onOpen,
+}: {
+  verdicts: LiveVerdict[];
+  pending: boolean;
+  onOpen: (id: number) => void;
+}) {
+  const ranked = [...verdicts].sort((a, b) => b.at.localeCompare(a.at));
+  return (
+    <div className="flex gap-2 overflow-x-auto border-b border-border bg-bg px-3 py-2 sm:px-4">
+      <span className="inline-flex shrink-0 items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
+        <span
+          className={
+            pending ? "size-1.5 rounded-full bg-candidate pulse-live" : "size-1.5 rounded-full bg-signal"
+          }
+        />
+        {pending ? "Live AI scoring optics…" : "Live AI"}
+      </span>
+      {ranked.length === 0 && !pending && (
+        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-subtle">
+          Waiting for residual contacts
+        </span>
+      )}
+      {ranked.slice(0, 8).map((v) => (
+        <button
+          key={v.contactId}
+          type="button"
+          onClick={() => onOpen(v.contactId)}
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-border px-2.5 font-mono text-[10px] uppercase tracking-[0.12em] text-fg"
+        >
+          <span
+            className={
+              v.verdict === "uap-candidate"
+                ? "size-1.5 rounded-full bg-candidate"
+                : v.verdict === "prosaic"
+                  ? "size-1.5 rounded-full bg-muted"
+                  : "size-1.5 rounded-full bg-watch"
+            }
+          />
+          <span className={v.verdict === "uap-candidate" ? "text-candidate" : "text-muted"}>
+            {v.verdict === "uap-candidate" ? "UAP" : v.verdict}
+          </span>
+          <span className="max-w-[140px] truncate text-fg">{v.likelyOrigin}</span>
+          <span className="text-muted">
+            {v.framesUsed} {v.spectra.includes("infrared") ? "IR" : "vis"}
+          </span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -413,8 +510,14 @@ function Feed({
               )}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="truncate text-sm font-medium">{s.locationLabel}</span>
-                <Badge variant={classTone(s.classification)}>{classLabel(s.classification)}</Badge>
+                <span className={cn("truncate text-sm font-medium", isUapCandidate(s) && "text-candidate")}>
+                  {s.locationLabel}
+                </span>
+                {isUapCandidate(s) ? (
+                  <Badge variant="candidate">{uapProbability(s)}% UAP</Badge>
+                ) : (
+                  <Badge variant={classTone(s.classification)}>{classLabel(s.classification)}</Badge>
+                )}
               </div>
               <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
                 {s.live ? "Live" : "File"} · {sourceLabel(s.source)} · {s.region} · {formatWhen(s.occurredAt)}
@@ -496,7 +599,11 @@ function Detail({ contact, onOpenOptics }: { contact: Contact; onOpenOptics: () 
             {coords(contact)} · {formatDuration(contact.durationSec)} · {sourceLabel(contact.source)}
           </p>
         </div>
-        <Badge variant="solid">{contact.confidence}% conf</Badge>
+        {isUapCandidate(contact) ? (
+          <Badge variant="candidate">{uapProbability(contact)}% UAP</Badge>
+        ) : (
+          <Badge variant="solid">{contact.confidence}% conf</Badge>
+        )}
       </div>
       <p className="mt-3 text-sm leading-relaxed text-muted">{contact.summary}</p>
       {contact.reasons && contact.reasons.length > 0 && (
