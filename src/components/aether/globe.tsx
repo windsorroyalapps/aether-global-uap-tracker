@@ -3,14 +3,22 @@ import { geoGraticule10, geoOrthographic, geoPath } from "d3-geo";
 import { feature } from "topojson-client";
 import type { GeometryCollection, Topology } from "topojson-specification";
 import landTopo from "world-atlas/land-110m.json";
-import type { Sighting } from "@/lib/uap/types";
+import type { Contact } from "@/lib/uap/types";
+
+type OverlayPt = { lat: number; lng: number };
 
 type Props = {
-  contacts: Sighting[];
+  contacts: Contact[];
   selectedId: number | null;
   onSelect: (id: number) => void;
   pickMode: boolean;
   onPick: (lat: number, lng: number) => void;
+  aircraft?: OverlayPt[];
+  balloons?: OverlayPt[];
+  satellites?: OverlayPt[];
+  iss?: { lat: number; lng: number } | null;
+  cameras?: OverlayPt[];
+  showTraffic: boolean;
 };
 
 const topo = landTopo as unknown as Topology<{ land: GeometryCollection }>;
@@ -22,7 +30,19 @@ function token(name: string, fallback: string) {
   return v || fallback;
 }
 
-export function Globe({ contacts, selectedId, onSelect, pickMode, onPick }: Props) {
+export function Globe({
+  contacts,
+  selectedId,
+  onSelect,
+  pickMode,
+  onPick,
+  aircraft = [],
+  balloons = [],
+  satellites = [],
+  iss = null,
+  cameras = [],
+  showTraffic,
+}: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const state = useRef({
@@ -36,10 +56,22 @@ export function Globe({ contacts, selectedId, onSelect, pickMode, onPick }: Prop
     selectedId,
     pickMode,
     reduced: false,
+    aircraft,
+    balloons,
+    satellites,
+    iss,
+    cameras,
+    showTraffic,
   });
   state.current.contacts = contacts;
   state.current.selectedId = selectedId;
   state.current.pickMode = pickMode;
+  state.current.aircraft = aircraft;
+  state.current.balloons = balloons;
+  state.current.satellites = satellites;
+  state.current.iss = iss;
+  state.current.cameras = cameras;
+  state.current.showTraffic = showTraffic;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -74,16 +106,28 @@ export function Globe({ contacts, selectedId, onSelect, pickMode, onPick }: Prop
     const ro = new ResizeObserver(resize);
     ro.observe(wrap);
 
+    const visible = (lng: number, lat: number, w: number, h: number, r: number) => {
+      const p = projection([lng, lat]);
+      if (!p) return null;
+      const dist2 = (p[0] - w / 2) ** 2 + (p[1] - (h / 2 + 4)) ** 2;
+      if (dist2 > r * r * 0.98) return null;
+      return p;
+    };
+
     const draw = (ts: number) => {
       const dt = Math.min(0.05, (ts - lastTs) / 1000);
       lastTs = ts;
       const st = state.current;
-      if (!st.dragging && !st.reduced) {
+      const selected = st.contacts.find((c) => c.id === st.selectedId);
+      if (selected && !st.dragging) {
+        const wantX = -selected.lng;
+        const wantY = Math.max(-68, Math.min(68, -selected.lat * 0.55));
+        st.rot[0] += (wantX - st.rot[0]) * Math.min(1, dt * 2.4);
+        st.rot[1] += (wantY - st.rot[1]) * Math.min(1, dt * 2.4);
+      } else if (!st.dragging && !st.reduced) {
         st.rot[0] = (st.rot[0] + dt * 6.2) % 360;
-        st.scan = (st.scan + dt * 28) % 360;
-      } else if (!st.reduced) {
-        st.scan = (st.scan + dt * 18) % 360;
       }
+      if (!st.reduced) st.scan = (st.scan + dt * (st.dragging ? 18 : 28)) % 360;
 
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const w = canvas.width / dpr;
@@ -167,13 +211,73 @@ export function Globe({ contacts, selectedId, onSelect, pickMode, onPick }: Prop
         ctx.restore();
       }
 
-      for (const s of st.contacts) {
-        const p = projection([s.lng, s.lat]);
-        if (!p) continue;
-        const dist2 = (p[0] - w / 2) ** 2 + (p[1] - (h / 2 + 4)) ** 2;
-        if (dist2 > r * r * 0.98) continue;
+      if (st.showTraffic) {
+        for (const a of st.aircraft) {
+          const p = visible(a.lng, a.lat, w, h, r);
+          if (!p) continue;
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], 1.15, 0, Math.PI * 2);
+          ctx.fillStyle = `${muted}99`;
+          ctx.fill();
+        }
+      }
 
-        const selected = s.id === st.selectedId;
+      for (const b of st.balloons) {
+        const p = visible(b.lng, b.lat, w, h, r);
+        if (!p) continue;
+        ctx.beginPath();
+        ctx.arc(p[0], p[1], 2.2, 0, Math.PI * 2);
+        ctx.strokeStyle = `${watch}aa`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+
+      for (const s of st.satellites) {
+        const p = visible(s.lng, s.lat, w, h, r);
+        if (!p) continue;
+        ctx.save();
+        ctx.translate(p[0], p[1]);
+        ctx.beginPath();
+        ctx.moveTo(0, -3.2);
+        ctx.lineTo(2.4, 0);
+        ctx.lineTo(0, 3.2);
+        ctx.lineTo(-2.4, 0);
+        ctx.closePath();
+        ctx.fillStyle = `${accent}cc`;
+        ctx.fill();
+        ctx.restore();
+      }
+
+      if (st.iss) {
+        const p = visible(st.iss.lng, st.iss.lat, w, h, r);
+        if (p) {
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], 5.2, 0, Math.PI * 2);
+          ctx.strokeStyle = `${accent}cc`;
+          ctx.lineWidth = 1.4;
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], 2.1, 0, Math.PI * 2);
+          ctx.fillStyle = accent;
+          ctx.fill();
+        }
+      }
+
+      for (const cam of st.cameras) {
+        const p = visible(cam.lng, cam.lat, w, h, r);
+        if (!p) continue;
+        ctx.save();
+        ctx.translate(p[0], p[1]);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = `${signal}cc`;
+        ctx.fillRect(-2.2, -2.2, 4.4, 4.4);
+        ctx.restore();
+      }
+
+      for (const s of st.contacts) {
+        const p = visible(s.lng, s.lat, w, h, r);
+        if (!p) continue;
+        const selectedDot = s.id === st.selectedId;
         const hover = s.id === st.hoverId;
         const color =
           s.classification === "anomalous"
@@ -183,15 +287,15 @@ export function Globe({ contacts, selectedId, onSelect, pickMode, onPick }: Prop
               : s.classification === "unidentified"
                 ? watch
                 : muted;
-        const rad = selected ? 4.4 : hover ? 3.6 : 2.4;
+        const rad = selectedDot ? 4.6 : hover ? 3.6 : s.live ? 3.1 : 2.4;
         ctx.beginPath();
         ctx.arc(p[0], p[1], rad, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
-        if (selected || hover) {
+        if (selectedDot || hover || s.live) {
           ctx.beginPath();
-          ctx.arc(p[0], p[1], rad + 6, 0, Math.PI * 2);
-          ctx.strokeStyle = `${color}99`;
+          ctx.arc(p[0], p[1], rad + (s.live && !selectedDot ? 5 : 6), 0, Math.PI * 2);
+          ctx.strokeStyle = `${color}${s.live ? "66" : "99"}`;
           ctx.lineWidth = 1;
           ctx.stroke();
         }

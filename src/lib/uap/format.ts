@@ -1,4 +1,4 @@
-import type { Classification, Sighting } from "./types";
+import type { Classification, Contact, Source } from "./types";
 
 export function formatWhen(iso: string) {
   const d = new Date(iso);
@@ -42,8 +42,37 @@ export function classTone(c: Classification): "default" | "live" | "watch" | "al
   return "default";
 }
 
-export function coords(s: Pick<Sighting, "lat" | "lng">) {
+export function sourceLabel(s: Source) {
+  switch (s) {
+    case "adsb":
+      return "ADS-B residual";
+    case "fireball":
+      return "CNEOS fireball";
+    case "social":
+      return "Open news";
+    case "optical":
+      return "Optical";
+    case "field-report":
+      return "Field report";
+    case "sensor":
+      return "Sensor";
+    case "balloon":
+      return "Radiosonde";
+    case "satellite":
+      return "Satellite";
+    default:
+      return "Archive";
+  }
+}
+
+export function coords(s: Pick<Contact, "lat" | "lng">) {
   const ns = s.lat >= 0 ? "N" : "S";
   const ew = s.lng >= 0 ? "E" : "W";
   return `${Math.abs(s.lat).toFixed(2)}°${ns}  ${Math.abs(s.lng).toFixed(2)}°${ew}`;
+}
+
+export function kmLabel(km: number) {
+  if (km < 1) return `${Math.round(km * 1000)} m`;
+  if (km < 10) return `${km.toFixed(1)} km`;
+  return `${Math.round(km)} km`;
 }

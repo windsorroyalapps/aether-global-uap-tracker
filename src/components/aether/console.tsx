@@ -10,20 +10,31 @@ import {
   Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
+import { Globe } from "@/components/aether/globe";
+import { OpticalPanel } from "@/components/aether/optics";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import { Globe } from "@/components/aether/globe";
-import { analyzeContact, generateBriefing, getAnalysis } from "@/lib/uap/analyze";
-import { classLabel, classTone, coords, formatDuration, formatWhen } from "@/lib/uap/format";
+import { analyzeContact, analyzeLiveEvent, generateBriefing, getAnalysis } from "@/lib/uap/analyze";
+import {
+  classLabel,
+  classTone,
+  coords,
+  formatDuration,
+  formatWhen,
+  sourceLabel,
+} from "@/lib/uap/format";
+import { getLivePicture, getWatchContext } from "@/lib/uap/live";
 import { fileReport, listSightings } from "@/lib/uap/queries";
-import { CLASSIFICATIONS, SHAPES, type Classification, type Shape, type Sighting } from "@/lib/uap/types";
+import { asContact, CLASSIFICATIONS, SHAPES, SOURCES } from "@/lib/uap/types";
+import type { Classification, Contact, Shape, Sighting, Source, StreamHealth } from "@/lib/uap/types";
 import { cn } from "@/lib/utils";
 
-type Panel = "feed" | "report" | "brief";
+type Panel = "feed" | "optical" | "report" | "brief";
+type Epoch = "all" | "live" | "archive";
 
 export function Console({ initial }: { initial: Sighting[] }) {
   const qc = useQueryClient();
@@ -32,41 +43,85 @@ export function Console({ initial }: { initial: Sighting[] }) {
     queryFn: () => listSightings(),
     initialData: initial,
   });
+  const live = useQuery({
+    queryKey: ["live"],
+    queryFn: () => getLivePicture(),
+    refetchInterval: 45_000,
+    retry: 1,
+  });
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [klass, setKlass] = useState<Classification | "all">("all");
+  const [source, setSource] = useState<Source | "all">("all");
+  const [epoch, setEpoch] = useState<Epoch>("all");
   const [panel, setPanel] = useState<Panel>("feed");
   const [pickMode, setPickMode] = useState(false);
   const [pick, setPick] = useState<{ lat: number; lng: number } | null>(null);
+  const [showTraffic, setShowTraffic] = useState(true);
 
-  const contacts = sightings.data ?? [];
+  const archive = useMemo(
+    () => (sightings.data ?? []).map((s) => asContact(s)),
+    [sightings.data],
+  );
+  const liveDetections = live.data?.detections ?? [];
+  const contacts = useMemo(() => {
+    const merged = [...liveDetections, ...archive];
+    const seen = new Set<number>();
+    const out: Contact[] = [];
+    for (const c of merged) {
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
+      out.push(c);
+    }
+    return out;
+  }, [archive, liveDetections]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return contacts.filter((s) => {
       if (klass !== "all" && s.classification !== klass) return false;
+      if (source !== "all" && s.source !== source) return false;
+      if (epoch === "live" && !s.live) return false;
+      if (epoch === "archive" && s.live) return false;
       if (!q) return true;
       return (
         s.locationLabel.toLowerCase().includes(q) ||
         s.region.toLowerCase().includes(q) ||
         s.shape.includes(q) ||
-        s.summary.toLowerCase().includes(q)
+        s.summary.toLowerCase().includes(q) ||
+        s.source.includes(q)
       );
     });
-  }, [contacts, klass, query]);
+  }, [contacts, klass, query, epoch, source]);
 
   const selected = contacts.find((s) => s.id === selectedId) ?? null;
 
   const stats = useMemo(() => {
     const anomalous = contacts.filter((s) => s.classification === "anomalous").length;
-    const sensors = contacts.filter((s) => s.source === "sensor").length;
-    const regions = new Set(contacts.map((s) => s.region)).size;
+    const liveN = contacts.filter((s) => s.live).length;
     const avg =
       contacts.length === 0
         ? 0
         : Math.round(contacts.reduce((a, s) => a + s.confidence, 0) / contacts.length);
-    return { total: contacts.length, anomalous, sensors, regions, avg };
+    return { total: contacts.length, anomalous, liveN, avg };
   }, [contacts]);
+
+  const watch = useQuery({
+    queryKey: ["watch", selected?.id],
+    enabled: Boolean(selected),
+    queryFn: () =>
+      getWatchContext({
+        data: {
+          lat: selected!.lat,
+          lng: selected!.lng,
+          altM: selected!.altitudeM ?? null,
+          source: selected!.source,
+          classification: selected!.classification,
+          shape: selected!.shape,
+        },
+      }),
+  });
 
   const onPick = (lat: number, lng: number) => {
     setPick({ lat, lng });
@@ -83,7 +138,7 @@ export function Console({ initial }: { initial: Sighting[] }) {
             <Radar className="size-4 text-accent" />
           </span>
           <div>
-            <p className="font-display text-lg font-semibold tracking-[-0.03em] leading-tight">
+            <p className="font-display text-lg font-semibold leading-tight tracking-[-0.03em]">
               AETHER
             </p>
             <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
@@ -93,9 +148,16 @@ export function Console({ initial }: { initial: Sighting[] }) {
         </div>
         <Badge variant="live" className="ml-1">
           <span className="mr-1.5 size-1.5 rounded-full bg-signal pulse-live" />
-          Live
+          {live.isFetching ? "Syncing" : "Live fusion"}
         </Badge>
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <Button
+            variant={showTraffic ? "default" : "secondary"}
+            size="sm"
+            onClick={() => setShowTraffic((v) => !v)}
+          >
+            ADS-B layer
+          </Button>
           <Button
             variant={panel === "brief" ? "default" : "secondary"}
             size="sm"
@@ -117,20 +179,18 @@ export function Console({ initial }: { initial: Sighting[] }) {
         </div>
       </header>
 
+      <StreamRail streams={live.data?.streams ?? []} />
+
       <section className="grid grid-cols-2 gap-px border-b border-border bg-border sm:grid-cols-4">
-        <Stat label="Contacts" value={stats.total} />
+        <Stat label="Fused contacts" value={stats.total} />
+        <Stat label="Live residuals" value={stats.liveN} />
         <Stat label="Anomalous" value={stats.anomalous} />
-        <Stat label="Sensor tracks" value={stats.sensors} />
         <Stat label="Mean confidence" value={`${stats.avg}%`} />
       </section>
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <section className="relative min-h-[42vh] flex-1 bg-bg lg:min-h-0">
-          {sightings.isLoading ? (
-            <div className="flex h-full min-h-[42vh] items-center justify-center text-sm text-muted">
-              Acquiring global picture…
-            </div>
-          ) : sightings.isError ? (
+          {sightings.isError ? (
             <div className="flex h-full min-h-[42vh] items-center justify-center px-6 text-center text-sm text-muted">
               Network picture failed to load. Reload the console.
             </div>
@@ -144,6 +204,12 @@ export function Console({ initial }: { initial: Sighting[] }) {
               }}
               pickMode={pickMode}
               onPick={onPick}
+              aircraft={live.data?.aircraft ?? []}
+              balloons={live.data?.balloons ?? []}
+              satellites={live.data?.satellites ?? []}
+              iss={live.data?.iss ?? null}
+              cameras={watch.data?.cameras ?? []}
+              showTraffic={showTraffic}
             />
           )}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-between p-3 sm:p-4">
@@ -151,16 +217,21 @@ export function Console({ initial }: { initial: Sighting[] }) {
               {pickMode ? "Tap globe to lock coordinates" : "Drag to rotate · tap a contact"}
             </p>
             <p className="rounded-md border border-border bg-bg/80 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
-              {stats.regions} regions
+              {live.data?.iss
+                ? `ISS ${live.data.iss.lat.toFixed(1)}°, ${live.data.iss.lng.toFixed(1)}°`
+                : "ISS acquiring"}
+              {live.data?.balloons?.length ? ` · ${live.data.balloons.length} sondes` : ""}
+              {watch.data?.cameraTotal ? ` · ${watch.data.cameraTotal} cams` : ""}
             </p>
           </div>
         </section>
 
-        <aside className="flex w-full flex-col border-t border-border bg-surface lg:w-[400px] lg:border-t-0 lg:border-l">
+        <aside className="flex w-full flex-col border-t border-border bg-surface lg:w-[420px] lg:border-t-0 lg:border-l">
           <div className="flex gap-1 border-b border-border p-2">
             {(
               [
                 ["feed", "Contacts"],
+                ["optical", "Optics"],
                 ["report", "Report"],
                 ["brief", "Intel"],
               ] as const
@@ -186,10 +257,18 @@ export function Console({ initial }: { initial: Sighting[] }) {
               setQuery={setQuery}
               klass={klass}
               setKlass={setKlass}
+              source={source}
+              setSource={setSource}
+              epoch={epoch}
+              setEpoch={setEpoch}
               selected={selected}
-              onSelect={setSelectedId}
+              onSelect={(id) => {
+                setSelectedId(id);
+              }}
+              onOpenOptics={() => setPanel("optical")}
             />
           )}
+          {panel === "optical" && <OpticalPanel contact={selected} />}
           {panel === "report" && (
             <ReportForm
               pick={pick}
@@ -210,6 +289,38 @@ export function Console({ initial }: { initial: Sighting[] }) {
   );
 }
 
+function StreamRail({ streams }: { streams: StreamHealth[] }) {
+  if (streams.length === 0) {
+    return (
+      <div className="flex gap-2 overflow-x-auto border-b border-border px-4 py-2">
+        <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
+          Acquiring live streams…
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex gap-2 overflow-x-auto border-b border-border px-3 py-2 sm:px-4">
+      {streams.map((s) => (
+        <span
+          key={s.id}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.12em]"
+          title={s.detail}
+        >
+          <span
+            className={cn(
+              "size-1.5 rounded-full",
+              s.ok ? "bg-signal pulse-live" : "bg-alert",
+            )}
+          />
+          <span className="text-muted">{s.label}</span>
+          <span className="text-fg">{s.ok ? s.detail : "down"}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="bg-bg px-4 py-3 sm:px-5">
@@ -225,16 +336,26 @@ function Feed({
   setQuery,
   klass,
   setKlass,
+  source,
+  setSource,
+  epoch,
+  setEpoch,
   selected,
   onSelect,
+  onOpenOptics,
 }: {
-  filtered: Sighting[];
+  filtered: Contact[];
   query: string;
   setQuery: (v: string) => void;
   klass: Classification | "all";
   setKlass: (v: Classification | "all") => void;
-  selected: Sighting | null;
+  source: Source | "all";
+  setSource: (v: Source | "all") => void;
+  epoch: Epoch;
+  setEpoch: (v: Epoch) => void;
+  selected: Contact | null;
   onSelect: (id: number) => void;
+  onOpenOptics: () => void;
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -244,17 +365,34 @@ function Feed({
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search region, shape, narrative"
+            placeholder="Search region, shape, stream"
             className="pl-9"
           />
         </div>
         <div className="flex flex-wrap gap-1.5">
+          {(["all", "live", "archive"] as const).map((e) => (
+            <Chip key={e} active={epoch === e} onClick={() => setEpoch(e)}>
+              {e === "all" ? "All epochs" : e === "live" ? "Live" : "Archive"}
+            </Chip>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
           <Chip active={klass === "all"} onClick={() => setKlass("all")}>
-            All
+            All classes
           </Chip>
           {CLASSIFICATIONS.map((c) => (
             <Chip key={c} active={klass === c} onClick={() => setKlass(c)}>
               {classLabel(c)}
+            </Chip>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <Chip active={source === "all"} onClick={() => setSource("all")}>
+            All streams
+          </Chip>
+          {SOURCES.filter((s) => s !== "optical").map((s) => (
+            <Chip key={s} active={source === s} onClick={() => setSource(s)}>
+              {sourceLabel(s)}
             </Chip>
           ))}
         </div>
@@ -279,13 +417,13 @@ function Feed({
                 <Badge variant={classTone(s.classification)}>{classLabel(s.classification)}</Badge>
               </div>
               <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
-                {s.region} · {s.shape} · {formatWhen(s.occurredAt)}
+                {s.live ? "Live" : "File"} · {sourceLabel(s.source)} · {s.region} · {formatWhen(s.occurredAt)}
               </p>
             </button>
           ))
         )}
       </div>
-      {selected && <Detail key={selected.id} contact={selected} />}
+      {selected && <Detail key={selected.id} contact={selected} onOpenOptics={onOpenOptics} />}
     </div>
   );
 }
@@ -313,24 +451,40 @@ function Chip({
   );
 }
 
-function Detail({ contact }: { contact: Sighting }) {
+function Detail({ contact, onOpenOptics }: { contact: Contact; onOpenOptics: () => void }) {
   const analysis = useQuery({
     queryKey: ["analysis", contact.id],
+    enabled: !contact.live,
     queryFn: () => getAnalysis({ data: { id: contact.id } }),
   });
+  const [liveResult, setLiveResult] = useState<(typeof analysis.data) | null>(null);
   const run = useMutation({
-    mutationFn: () => analyzeContact({ data: { id: contact.id } }),
+    mutationFn: () =>
+      contact.live
+        ? analyzeLiveEvent({
+            data: {
+              label: contact.locationLabel,
+              lat: contact.lat,
+              lng: contact.lng,
+              summary: contact.summary,
+              source: contact.source,
+              residual: contact.residual ?? null,
+              fusion: (contact.reasons ?? []).join("; "),
+            },
+          })
+        : analyzeContact({ data: { id: contact.id } }),
     onSuccess: (res) => {
       if (res && "error" in res) {
         toast.error(res.error);
         return;
       }
-      void analysis.refetch();
+      if (contact.live) setLiveResult(res);
+      else void analysis.refetch();
     },
     onError: () => toast.error("Assessment failed."),
   });
 
-  const result = analysis.data;
+  const result = contact.live ? liveResult : analysis.data;
   const pending = run.isPending;
 
   return (
@@ -339,14 +493,22 @@ function Detail({ contact }: { contact: Sighting }) {
         <div>
           <p className="font-display text-base font-semibold leading-snug">{contact.locationLabel}</p>
           <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
-            {coords(contact)} · {formatDuration(contact.durationSec)}
+            {coords(contact)} · {formatDuration(contact.durationSec)} · {sourceLabel(contact.source)}
           </p>
         </div>
         <Badge variant="solid">{contact.confidence}% conf</Badge>
       </div>
       <p className="mt-3 text-sm leading-relaxed text-muted">{contact.summary}</p>
+      {contact.reasons && contact.reasons.length > 0 && (
+        <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.12em] text-watch">
+          {contact.reasons.join(" · ")}
+        </p>
+      )}
+      <Button variant="secondary" className="mt-3 w-full" onClick={onOpenOptics}>
+        Nearby cameras and correlators
+      </Button>
       <div className="mt-4">
-        {result ? (
+        {result && !("error" in result) ? (
           <div className="rounded-lg border border-border bg-surface p-3">
             <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">
               AI assessment · {result.threat}
@@ -535,8 +697,8 @@ function BriefingPanel() {
   return (
     <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
       <p className="text-sm leading-relaxed text-muted">
-        Grok reads the latest contacts on the board and writes a calm watch-floor brief. Run it when
-        you want a synthesis — it is not generated automatically.
+        Grok reads the live fusion picture plus the latest files on the board. Run it when you want
+        a synthesis — it is not generated automatically.
       </p>
       <Button className="w-full" disabled={mut.isPending} onClick={() => mut.mutate()}>
         <Activity className="size-3.5" />

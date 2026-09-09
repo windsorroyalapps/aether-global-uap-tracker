@@ -1,16 +1,27 @@
 # AETHER — Global UAP Detection Network
 
-AI-powered console for tracking unidentified anomalous phenomena worldwide.
+Live-fusion console for tracking unidentified anomalous phenomena. AETHER correlates public sensor streams, scores residuals against prosaic correlators, and pulls nearby public cameras that could have a line of sight on an event.
 
-AETHER plots historical archives, sensor contacts, and field reports on a live globe, classifies each file, and can run a Grok assessment or a global watch-floor briefing on demand.
+## Live streams
 
-## What it does
+- **ADS-B** — anomaly scoring on live aircraft (slow high, extreme climb, emergency squawk)
+- **SondeHub** — high-altitude radiosondes (frequent "white orb" correlator)
+- **TLE / Kepler+J2** — ISS, CSS, Hubble, Terra/Aqua, NOAA-20, Landsat 8 and other catalog birds
+- **Astronomy** — Sun, Moon, Venus, Jupiter, Mars, Saturn altitude/azimuth
+- **CNEOS** — NASA fireballs
+- **NOAA SWPC** — Kp / aurora plus GOES X-ray flares
+- **Open news** — GDELT + HN Algolia geoparsed reports
+- **Public optics** — NOAA GOES sectors, Himawari, Hessdalen, FU Berlin, DOT 511 (AZ/FL/GA/PA/NY/WI/NV/AK), ODOT TripCheck, plus ALERTCalifornia / Caltrans / NYC / TfL where in range
 
-- **Global picture** — orthographic globe of contacts across every inhabited continent and the oceans
-- **Contact files** — location, kinematics notes, classification, confidence, and source
-- **Field reports** — file a new contact (no personal data; reports are shared with everyone on the board)
-- **AI assessment** — Grok reads a single file and returns origin hypothesis + watch level (cached)
-- **Intel briefing** — on-demand synthesis of the latest contacts
+Cameras are ranked by line-of-sight: distance, facing azimuth, elevation through Earth curvature, and optical range by camera kind (traffic vs sky vs space).
+
+## Console
+
+- Globe overlays for aircraft, balloons, and satellites
+- Optics mosaic with facing filter
+- Correlator stack (balloons / satellites / sky bodies / flares)
+- Residual scoring that prefers prosaic explanations
+- Grok assessment + watch-floor briefing
 
 ## Stack
 
@@ -18,6 +29,7 @@ AETHER plots historical archives, sensor contacts, and field reports on a live g
 - Tailwind v4
 - Postgres (Neon in production, PGLite in local preview)
 - xAI Grok for analysis (`grok-4.5`)
+- `astronomy-engine` for celestial positions
 
 ## Local
 
@@ -26,8 +38,10 @@ npm install
 npm run dev
 ```
 
-AI features require `XAI_API_KEY` in the server environment. The globe and tracker work without it.
+AI features require `XAI_API_KEY`. Tracker, globe, cameras, and fusion streams work without it.
 
 ## Data
 
 Contacts are stored in `sightings`. Seeded archive cases are public-record reports and sensor notes, classified conservatively. Field reports must not include names, emails, or private addresses.
+
+Only official public camera and telemetry APIs are used. Snapshot proxying is SSRF-restricted to an allowlisted host set.
