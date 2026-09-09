@@ -1,0 +1,61 @@
+{
+  "name": "aether-desktop",
+  "productName": "AETHER",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AETHER Global UAP Tracker — desktop console",
+  "main": "main.js",
+  "author": "Windsor Royal Apps",
+  "scripts": {
+    "start": "electron .",
+    "pack:win": "electron-builder --win nsis --publish never",
+    "pack:mac": "electron-builder --mac dmg --publish never",
+    "pack:linux": "electron-builder --linux AppImage --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "app.aether.tracker",
+    "productName": "AETHER",
+    "copyright": "Copyright © Windsor Royal Apps",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "icon.png",
+      "app-url.txt"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "icon.png",
+      "artifactName": "AETHER-Setup-${version}.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AETHER"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "icon": "icon.png",
+      "category": "public.app-category.utilities"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "icon": "icon.png",
+      "category": "Utility"
+    }
+  }
+}

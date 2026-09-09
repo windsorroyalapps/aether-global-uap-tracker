@@ -1,0 +1,129 @@
+name: TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_url:
+        description: "Live console URL the iOS shell should open"
+        required: false
+        default: ""
+      groups:
+        description: "Comma-separated external TestFlight groups (blank = internal only)"
+        required: false
+        default: ""
+      notes:
+        description: "What to Test notes"
+        required: false
+        default: "AETHER live UAP console beta."
+  push:
+    branches: [main]
+    paths:
+      - "native/ios/**"
+      - ".github/workflows/ios-testflight.yml"
+
+concurrency:
+  group: testflight-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AETHER_APP_URL: ${{ inputs.app_url || vars.AETHER_APP_URL || 'https://aether-global-uap-tracker.vercel.app' }}
+
+jobs:
+  testflight:
+    name: Sign and upload to TestFlight
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Apple credentials
+        id: creds
+        env:
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          IOS_DIST_CERTIFICATE_P12: ${{ secrets.IOS_DIST_CERTIFICATE_P12 }}
+          IOS_DIST_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DIST_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+        run: |
+          missing=()
+          [ -n "${APP_STORE_CONNECT_API_KEY:-}" ] || missing+=(APP_STORE_CONNECT_API_KEY)
+          [ -n "${APP_STORE_CONNECT_KEY_ID:-}" ] || missing+=(APP_STORE_CONNECT_KEY_ID)
+          [ -n "${APP_STORE_CONNECT_ISSUER_ID:-}" ] || missing+=(APP_STORE_CONNECT_ISSUER_ID)
+          [ -n "${APPLE_TEAM_ID:-}" ] || missing+=(APPLE_TEAM_ID)
+          [ -n "${IOS_DIST_CERTIFICATE_P12:-}" ] || missing+=(IOS_DIST_CERTIFICATE_P12)
+          [ -n "${IOS_DIST_CERTIFICATE_PASSWORD:-}" ] || missing+=(IOS_DIST_CERTIFICATE_PASSWORD)
+          [ -n "${IOS_PROVISIONING_PROFILE:-}" ] || missing+=(IOS_PROVISIONING_PROFILE)
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "Missing GitHub secrets: ${missing[*]}"
+            echo "See native/ios/TESTFLIGHT.md"
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              echo "::error::Add the Apple secrets in native/ios/TESTFLIGHT.md, then re-run."
+              exit 1
+            fi
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Select Xcode 16
+        if: steps.creds.outputs.ready == 'true'
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer 2>/dev/null \
+            || sudo xcode-select -s /Applications/Xcode_16.3.app/Contents/Developer 2>/dev/null \
+            || sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer 2>/dev/null \
+            || sudo xcode-select -s /Applications/Xcode_16.1.app/Contents/Developer 2>/dev/null \
+            || sudo xcode-select -s /Applications/Xcode_16.0.app/Contents/Developer 2>/dev/null \
+            || sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Stamp console URL
+        if: steps.creds.outputs.ready == 'true'
+        run: printf '%s\n' "$AETHER_APP_URL" > native/app-url.txt
+
+      - name: Import signing material
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          IOS_DIST_CERTIFICATE_P12: ${{ secrets.IOS_DIST_CERTIFICATE_P12 }}
+          IOS_DIST_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DIST_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+          IOS_KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+        run: bash native/ios/scripts/import-signing.sh
+
+      - name: Install XcodeGen
+        if: steps.creds.outputs.ready == 'true'
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        if: steps.creds.outputs.ready == 'true'
+        working-directory: native/ios
+        run: |
+          xcodegen generate
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" Aether/Info.plist
+
+      - uses: ruby/setup-ruby@v1
+        if: steps.creds.outputs.ready == 'true'
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: native/ios
+
+      - name: Upload to TestFlight
+        if: steps.creds.outputs.ready == 'true'
+        working-directory: native/ios
+        env:
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          AETHER_APP_URL: ${{ env.AETHER_APP_URL }}
+          TESTFLIGHT_GROUPS: ${{ inputs.groups || '' }}
+          TESTFLIGHT_CHANGELOG: ${{ inputs.notes || 'AETHER live UAP console beta.' }}
+        run: bundle exec fastlane beta
+
+      - uses: actions/upload-artifact@v4
+        if: steps.creds.outputs.ready == 'true'
+        with:
+          name: AETHER-testflight-ipa
+          path: native/ios/build/testflight/AETHER.ipa
+          if-no-files-found: error
