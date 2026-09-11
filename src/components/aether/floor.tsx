@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { exportSnapshot, ingestReplica, listLedger, listQueue, listSnapshots, reviewReport, sealServerBackup, type ReplicaRecord } from "@/lib/uap/archive";
-import { armNativePush } from "@/lib/uap/alerts";
+import { ensureServiceWorker } from "@/lib/uap/alerts";
 import { aiReviewReport, PROVIDER_IDS, type ProviderKeys } from "@/lib/uap/ensemble";
 import { officerLogin, officerSession } from "@/lib/uap/officer";
 import { clearOfficer, loadOfficer, saveOfficer, type OfficerSession } from "@/lib/uap/officer-session";
@@ -92,9 +92,7 @@ export function FloorPanel() {
       setSession(next);
       setPass("");
       toast.success(`Watch officer ${res.callsign} on duty`);
-      void armNativePush().then((perm) => {
-        if (perm === "granted") toast.message("Native push armed for elevated alerts");
-      });
+      void ensureServiceWorker();
     },
     onError: (e: Error) => toast.error(e.message),
   });

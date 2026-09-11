@@ -21,6 +21,8 @@ const rank: Record<AlertTier, number> = { suppress: 0, watch: 1, candidate: 2, e
 
 const seen = new Map<string, { at: number; residual: number; tier: AlertTier }>();
 
+const PUSH_FLAG = "aether-push-on";
+
 export function tabHidden() {
   return typeof document !== "undefined" && document.visibilityState === "hidden";
 }
@@ -94,7 +96,7 @@ export function pageNative(ev: AlertEvent) {
   try {
     const sw = navigator.serviceWorker?.controller;
     if (sw) {
-      sw.postMessage({ kind: "notify", title, body, tag: ev.key, silent: ev.tier === "watch" });
+      sw.postMessage({ kind: "notify", title, body, tag: ev.key, silent: ev.tier === "watch", url: "/" });
       return;
     }
     new Notification(title, { body, tag: ev.key, silent: ev.tier === "watch" });
@@ -107,21 +109,114 @@ export function pageNative(ev: AlertEvent) {
   }
 }
 
-export async function armNativePush() {
-  if (typeof window === "undefined") return "denied";
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i += 1) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+/** Register the service worker quietly — never prompts for notification permission. */
+export async function ensureServiceWorker(): Promise<ServiceWorkerRegistration | null> {
+  if (typeof window === "undefined" || !("serviceWorker" in navigator)) return null;
   try {
-    if ("serviceWorker" in navigator) {
-      await navigator.serviceWorker.register("/aether-sw.js");
-    }
+    return await navigator.serviceWorker.register("/aether-sw.js");
   } catch {
-    /* ignore */
+    return null;
   }
+}
+
+/** @deprecated Prefer ensureServiceWorker(); permission is opt-in via enablePushNotifications. */
+export async function armNativePush() {
+  await ensureServiceWorker();
   if (typeof Notification === "undefined") return "denied";
-  if (Notification.permission === "granted") return "granted";
-  if (Notification.permission === "denied") return "denied";
+  return Notification.permission;
+}
+
+export function isPushOptedIn(): boolean {
+  if (typeof window === "undefined") return false;
   try {
-    return await Notification.requestPermission();
+    return localStorage.getItem(PUSH_FLAG) === "1";
   } catch {
-    return "denied";
+    return false;
+  }
+}
+
+export async function enablePushNotifications(): Promise<
+  | { ok: true; permission: NotificationPermission }
+  | { ok: false; error: string }
+> {
+  if (typeof window === "undefined") return { ok: false, error: "not-browser" };
+  if (typeof Notification === "undefined" || !("PushManager" in window)) {
+    return { ok: false, error: "push-unsupported" };
+  }
+
+  const reg = await ensureServiceWorker();
+  if (!reg) return { ok: false, error: "sw-failed" };
+
+  let permission = Notification.permission;
+  if (permission === "default") {
+    try {
+      permission = await Notification.requestPermission();
+    } catch {
+      return { ok: false, error: "permission-failed" };
+    }
+  }
+  if (permission !== "granted") return { ok: false, error: "permission-denied" };
+
+  const { getPushPublicKey, subscribePush } = await import("./push-api");
+  const { publicKey } = await getPushPublicKey();
+  if (!publicKey) return { ok: false, error: "no-vapid" };
+
+  try {
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey) as BufferSource,
+    });
+    const json = sub.toJSON();
+    if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
+      return { ok: false, error: "bad-subscription" };
+    }
+    await subscribePush({
+      data: {
+        endpoint: json.endpoint,
+        keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
+        userAgent: navigator.userAgent,
+      },
+    });
+    try {
+      localStorage.setItem(PUSH_FLAG, "1");
+    } catch {
+      /* ignore */
+    }
+    return { ok: true, permission };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "subscribe-failed";
+    return { ok: false, error: msg };
+  }
+}
+
+export async function disablePushNotifications(): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (typeof window === "undefined") return { ok: false, error: "not-browser" };
+  try {
+    const reg = await ensureServiceWorker();
+    const sub = await reg?.pushManager.getSubscription();
+    if (sub) {
+      const endpoint = sub.endpoint;
+      await sub.unsubscribe().catch(() => undefined);
+      const { unsubscribePush } = await import("./push-api");
+      await unsubscribePush({ data: { endpoint } }).catch(() => undefined);
+    }
+    try {
+      localStorage.removeItem(PUSH_FLAG);
+    } catch {
+      /* ignore */
+    }
+    return { ok: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "unsubscribe-failed";
+    return { ok: false, error: msg };
   }
 }

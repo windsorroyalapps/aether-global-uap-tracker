@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Crosshair, Radar, Sparkles } from "lucide-react";
+import { Bell, BellOff, Crosshair, Radar, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Globe } from "@/components/aether/globe";
 import { FloorPanel } from "@/components/aether/floor";
@@ -20,7 +20,16 @@ import { getLivePicture, getWatchContext, liveOpticsForTracks, sweepLiveSensors 
 import { compactContact } from "@/lib/uap/live-sensor";
 import { listSightings } from "@/lib/uap/queries";
 import { listQueue } from "@/lib/uap/archive";
-import { classifyAlert, pageNative, shouldPage, armNativePush, tabHidden } from "@/lib/uap/alerts";
+import {
+  classifyAlert,
+  pageNative,
+  shouldPage,
+  ensureServiceWorker,
+  enablePushNotifications,
+  disablePushNotifications,
+  isPushOptedIn,
+  tabHidden,
+} from "@/lib/uap/alerts";
 import { dutyReviewPending } from "@/lib/uap/ensemble";
 import { asContact } from "@/lib/uap/types";
 import type { Classification, Contact, LiveVerdict, Sighting, Source } from "@/lib/uap/types";
@@ -56,6 +65,8 @@ export function Console({ initial }: { initial: Sighting[] }) {
   const [pickMode, setPickMode] = useState(false);
   const [pick, setPick] = useState<{ lat: number; lng: number } | null>(null);
   const [showTraffic, setShowTraffic] = useState(false);
+  const [pushOn, setPushOn] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
 
   const archive = useMemo(
     () => (sightings.data ?? []).map((s) => asContact(s)),
@@ -141,8 +152,36 @@ export function Console({ initial }: { initial: Sighting[] }) {
   });
 
   useEffect(() => {
-    void armNativePush();
+    setPushOn(isPushOptedIn());
+    void ensureServiceWorker();
   }, []);
+
+  const togglePush = useCallback(async () => {
+    setPushBusy(true);
+    try {
+      if (pushOn) {
+        const res = await disablePushNotifications();
+        if (res.ok) {
+          setPushOn(false);
+          toast.message("Alerts off");
+        } else toast.error(`Could not disable alerts: ${res.error}`);
+      } else {
+        const res = await enablePushNotifications();
+        if (res.ok) {
+          setPushOn(true);
+          toast.success("Alerts on — closed-app push armed");
+        } else if (res.error === "no-vapid") {
+          toast.error("Push not configured (missing VAPID keys on server)");
+        } else if (res.error === "permission-denied") {
+          toast.error("Notification permission denied");
+        } else {
+          toast.error(`Could not enable alerts: ${res.error}`);
+        }
+      }
+    } finally {
+      setPushBusy(false);
+    }
+  }, [pushOn]);
 
   const alerts = useMemo(
     () => contacts.filter((c) => c.live).map(classifyAlert),
@@ -284,6 +323,15 @@ export function Console({ initial }: { initial: Sighting[] }) {
         )}
         <Badge variant="live">Duty 24/7</Badge>
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <Button
+            variant={pushOn ? "default" : "secondary"}
+            size="sm"
+            disabled={pushBusy}
+            onClick={() => void togglePush()}
+          >
+            {pushOn ? <Bell className="size-3.5" /> : <BellOff className="size-3.5" />}
+            {pushOn ? "Alerts on" : "Enable alerts"}
+          </Button>
           <Button
             variant={showTraffic ? "default" : "secondary"}
             size="sm"
