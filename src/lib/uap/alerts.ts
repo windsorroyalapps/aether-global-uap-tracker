@@ -1,6 +1,7 @@
 import { detectionNotes } from "./detect";
 import { uapProbability } from "./infer";
 import type { Contact } from "./types";
+import { deletePushSubscription, getVapidPublicKey, savePushSubscription } from "./push";
 
 export type AlertTier = "suppress" | "watch" | "candidate" | "elevated";
 
@@ -12,6 +13,8 @@ export type AlertEvent = {
   key: string;
   residual: number;
 };
+
+export type WebPushStatus = "unsupported" | "denied" | "prompt" | "granted" | "subscribed";
 
 /** Sensitive watch: page earlier, shorter quiet window. */
 const COOL_MS = 8 * 60 * 1000;
@@ -107,21 +110,116 @@ export function pageNative(ev: AlertEvent) {
   }
 }
 
-export async function armNativePush() {
-  if (typeof window === "undefined") return "denied";
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i += 1) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+async function ensureServiceWorker() {
+  if (!("serviceWorker" in navigator)) return null;
   try {
-    if ("serviceWorker" in navigator) {
-      await navigator.serviceWorker.register("/aether-sw.js");
+    return await navigator.serviceWorker.register("/aether-sw.js");
+  } catch {
+    return null;
+  }
+}
+
+async function currentPushSubscription() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    return (await reg.pushManager.getSubscription()) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function persistSubscription(sub: PushSubscription) {
+  const json = sub.toJSON();
+  const endpoint = json.endpoint;
+  const p256dh = json.keys?.p256dh;
+  const auth = json.keys?.auth;
+  if (!endpoint || !p256dh || !auth) return false;
+  const res = await savePushSubscription({
+    data: {
+      endpoint,
+      p256dh,
+      auth,
+      userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+    },
+  });
+  return Boolean(res && "ok" in res && res.ok);
+}
+
+export async function webPushStatus(): Promise<WebPushStatus> {
+  if (typeof window === "undefined") return "unsupported";
+  if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
+    return "unsupported";
+  }
+  if (Notification.permission === "denied") return "denied";
+  const sub = await currentPushSubscription();
+  if (sub) return "subscribed";
+  if (Notification.permission === "granted") return "granted";
+  return "prompt";
+}
+
+export async function armNativePush(): Promise<WebPushStatus> {
+  if (typeof window === "undefined") return "unsupported";
+  const reg = await ensureServiceWorker();
+  if (typeof Notification === "undefined") return "unsupported";
+
+  let permission = Notification.permission;
+  if (permission === "default") {
+    try {
+      permission = await Notification.requestPermission();
+    } catch {
+      return "denied";
+    }
+  }
+  if (permission === "denied") return "denied";
+  if (permission !== "granted") return "prompt";
+
+  if (!reg || !("PushManager" in window)) return "granted";
+
+  try {
+    const { publicKey } = await getVapidPublicKey();
+    if (!publicKey) return "granted";
+
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+    }
+    const saved = await persistSubscription(sub);
+    return saved ? "subscribed" : "granted";
+  } catch {
+    return "granted";
+  }
+}
+
+export async function disableWebPush(): Promise<WebPushStatus> {
+  if (typeof window === "undefined") return "unsupported";
+  try {
+    const sub = await currentPushSubscription();
+    if (sub) {
+      const endpoint = sub.endpoint;
+      try {
+        await sub.unsubscribe();
+      } catch {
+        /* ignore */
+      }
+      if (endpoint) {
+        await deletePushSubscription({ data: { endpoint } });
+      }
     }
   } catch {
     /* ignore */
   }
-  if (typeof Notification === "undefined") return "denied";
-  if (Notification.permission === "granted") return "granted";
-  if (Notification.permission === "denied") return "denied";
-  try {
-    return await Notification.requestPermission();
-  } catch {
-    return "denied";
-  }
+  return webPushStatus();
 }
