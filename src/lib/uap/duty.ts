@@ -37,9 +37,6 @@ export async function runDutyCycle() {
       if (result.sent > 0) {
         await markServerPushSent(ev);
         pushSent += result.sent;
-      } else if (!result.skipped) {
-        // no subscribers yet — still mark so we don't hammer empty fanout
-        await markServerPushSent(ev);
       }
     }
   } catch (err) {
