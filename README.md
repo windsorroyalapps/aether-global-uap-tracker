@@ -24,30 +24,37 @@ Cameras are ranked by line-of-sight: distance, facing azimuth, elevation through
 - Correlator stack (balloons / satellites / sky bodies / flares)
 - Residual scoring that prefers prosaic explanations
 - Grok assessment + watch-floor briefing
+- Header **Alerts** bell — opt-in Web Push for 24/7 phone notifications
 
 ## Live push (24/7 phone alerts)
 
-Opt-in Web Push reaches phones even when the console tab is closed. Duty cycles (`duty-24h.yml` every 20 min + Vercel hourly `/api/duty`) classify live detections and broadcast **candidate** / **elevated** alerts (8-minute cooldown) to stored subscriptions.
+Opt-in Web Push reaches phones even when the console tab is closed. Duty cycles (`.github/workflows/duty-24h.yml` every 20 min + Vercel cron on `/api/duty`) classify live detections and broadcast **candidate** / **elevated** alerts (8-minute cooldown) to stored subscriptions.
 
 ### Vercel / env
 
-Set these on the Vercel project (Production + Preview). **Never commit the private key into TypeScript source** — README / deploy UI only.
+Generate a key pair locally (do not commit the private key):
 
 ```bash
-VAPID_PUBLIC_KEY=BBt-qrOuPV6oDiZCBpVOD5Wbk4lqyaDkmSDxdR_sk-og2lh2I_uJaY8oYqHVMTCFBx4LWFO3KvCe0Cdz234yiA8
-VAPID_PRIVATE_KEY=n-ypH1FHKSSdW9oErdtLUxCZd9SDozCabPOnPcAlMKs
-VAPID_SUBJECT=mailto:windsorroyalapps@users.noreply.github.com
+npx web-push generate-vapid-keys
+```
+
+Set these on the Vercel project (Production + Preview) as secrets — **never commit real values**:
+
+```bash
+VAPID_PUBLIC_KEY=...   # from generate-vapid-keys
+VAPID_PRIVATE_KEY=...  # from generate-vapid-keys — Vercel env only
+VAPID_SUBJECT=mailto:you@example.com
 ```
 
 Optional: `AETHER_APP_URL=https://aether-global-uap-tracker.vercel.app` so notification taps open the live console.
 
-After deploy, open the console → header **Alerts** bell → allow notifications. That registers `/aether-sw.js`, creates a PushManager subscription with the public VAPID key, and saves the endpoint to Postgres (`push_subscriptions`). Toggle again to unsubscribe.
+After deploy, open the console → header **Alerts** → allow notifications. That registers `/aether-sw.js`, creates a PushManager subscription with the public VAPID key, and saves the endpoint to Postgres (`push_subscriptions`). Toggle again to unsubscribe.
 
 ### iPhone / iPad (Safari)
 
 Safari only delivers Web Push for **Home Screen web apps** (iOS 16.4+):
 
-1. Open `https://aether-global-uap-tracker.vercel.app` in Safari (not an in-app browser).
+1. Open the live console in Safari (not an in-app browser).
 2. Share → **Add to Home Screen** → open the icon (standalone).
 3. Tap **Alerts** in the header and allow notifications when prompted.
 4. Keep the Home Screen app installed; pushes arrive while it is backgrounded or closed.
@@ -84,7 +91,7 @@ npm install
 npm run dev
 ```
 
-AI features require `XAI_API_KEY`. Tracker, globe, cameras, and fusion streams work without it. Web Push broadcast is a no-op until the three `VAPID_*` vars above are set.
+AI features require `XAI_API_KEY`. Tracker, globe, cameras, and fusion streams work without it. Web Push broadcast is a no-op until the three `VAPID_*` vars are set in the environment.
 
 ## Data
 
