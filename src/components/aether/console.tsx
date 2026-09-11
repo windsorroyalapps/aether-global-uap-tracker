@@ -11,9 +11,8 @@ import {
   StreamRail,
   Stat,
   Feed,
-  BriefingPanel,
-  ReportForm,
 } from "@/components/aether/console-rails";
+import { BriefingPanel, ReportForm } from "@/components/aether/console-rails-more";
 import { LiveOpticsStrip } from "@/components/aether/optics";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

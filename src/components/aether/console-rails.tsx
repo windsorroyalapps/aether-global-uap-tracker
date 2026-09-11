@@ -1,27 +1,20 @@
-import { useMutation, useQuery, useState, useEffect, type ReactNode } from "react";
-import { Activity, Filter, Globe2, MapPin, Sparkles } from "lucide-react";
-import { toast } from "sonner";
+import { type ReactNode } from "react";
+import { Filter } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { Textarea } from "@/components/ui/textarea";
-import { analyzeContact, analyzeLiveEvent, generateBriefing, getAnalysis } from "@/lib/uap/analyze";
 import {
   classLabel,
   classTone,
-  coords,
-  formatDuration,
   formatWhen,
   sourceLabel,
 } from "@/lib/uap/format";
-import { fileReport } from "@/lib/uap/queries";
-import { CLASSIFICATIONS, SHAPES, SOURCES } from "@/lib/uap/types";
+import { CLASSIFICATIONS, SOURCES } from "@/lib/uap/types";
 import { isUapCandidate, uapProbability } from "@/lib/uap/infer";
-import type { Classification, Contact, LiveVerdict, Shape, Sighting, Source, StreamHealth } from "@/lib/uap/types";
+import type { Classification, Contact, LiveVerdict, Source, StreamHealth } from "@/lib/uap/types";
 import type { AlertEvent } from "@/lib/uap/alerts";
 import { cn } from "@/lib/utils";
+import { Detail } from "@/components/aether/console-rails-more";
 
 export function ElevatedRail({
   events,
