@@ -58,19 +58,18 @@ function pickFrames(ground: CameraHit[], space: CameraHit[]) {
 type Frame = { name: string; spectrum: CameraHit["spectrum"]; mime: string; b64: string };
 
 async function grabFrames(cams: CameraHit[]): Promise<Frame[]> {
-  const grabbed = await Promise.all(
-    cams.map(async (cam) => {
-      try {
-        const snap = await snapshotFor(cam.id);
-        if (!snap) return null;
-        if (snap.b64.length > 380_000) return null;
-        return { name: cam.name, spectrum: cam.spectrum, mime: snap.mime, b64: snap.b64 };
-      } catch {
-        return null;
-      }
-    }),
-  );
-  return grabbed.filter((x): x is Frame => x !== null);
+  const out: Frame[] = [];
+  for (const cam of cams) {
+    try {
+      const snap = await snapshotFor(cam.id);
+      if (!snap) continue;
+      if (snap.b64.length > 380_000) continue;
+      out.push({ name: cam.name, spectrum: cam.spectrum, mime: snap.mime, b64: snap.b64 });
+    } catch {
+      // skip failed snapshot
+    }
+  }
+  return out;
 }
 
 type GrokLive = {
@@ -185,7 +184,7 @@ export async function sweepContacts(items: Compact[]): Promise<LiveVerdict[]> {
     return !v || Date.now() - Date.parse(v.at) > 6 * 60_000;
   });
 
-  const batch = stale.slice(0, 3);
+  const batch = stale.slice(0, 1);
   await Promise.all(batch.map((c) => scoreOne(c).catch(() => null)));
 
   return ranked.map((c) => peekVerdict(c.id)).filter((v): v is LiveVerdict => v !== null);
