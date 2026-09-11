@@ -1,7 +1,6 @@
 import { detectionNotes } from "./detect";
 import { uapProbability } from "./infer";
 import type { Contact } from "./types";
-import { deletePushSubscription, getVapidPublicKey, savePushSubscription } from "./push";
 
 export type AlertTier = "suppress" | "watch" | "candidate" | "elevated";
 
@@ -139,6 +138,7 @@ async function currentPushSubscription() {
 }
 
 async function persistSubscription(sub: PushSubscription) {
+  const { savePushSubscription } = await import("./push");
   const json = sub.toJSON();
   const endpoint = json.endpoint;
   const p256dh = json.keys?.p256dh;
@@ -186,6 +186,7 @@ export async function armNativePush(): Promise<WebPushStatus> {
   if (!reg || !("PushManager" in window)) return "granted";
 
   try {
+    const { getVapidPublicKey } = await import("./push");
     const { publicKey } = await getVapidPublicKey();
     if (!publicKey) return "granted";
 
@@ -215,6 +216,7 @@ export async function disableWebPush(): Promise<WebPushStatus> {
         /* ignore */
       }
       if (endpoint) {
+        const { deletePushSubscription } = await import("./push");
         await deletePushSubscription({ data: { endpoint } });
       }
     }
