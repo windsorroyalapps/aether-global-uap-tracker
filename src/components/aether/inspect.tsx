@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { OpticalPanel } from "@/components/aether/optics";
@@ -59,7 +59,7 @@ function Kinematics({ contact }: { contact: Contact }) {
             {contact.locationLabel}
           </p>
           <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
-            {coords(contact)} · {sourceLabel(contact.source)} · {formatWhen(contact.occurredAt)}
+            {coords(contact)}  |  {sourceLabel(contact.source)}  |  {formatWhen(contact.occurredAt)}
           </p>
         </div>
         {candidate ? (
@@ -109,7 +109,7 @@ function OriginCard({ contact }: { contact: Contact }) {
         <RadiantDial az={origin.radiantAz} el={origin.radiantEl} heading={origin.headingDeg} />
         <div className="min-w-0 flex-1">
           <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">
-            Incoming from space · reverse track
+            Incoming from space  |  reverse track
           </p>
           {n && origin.raHours != null && origin.decDeg != null ? (
             <>
@@ -117,10 +117,10 @@ function OriginCard({ contact }: { contact: Contact }) {
                 Nearest {n.kind === "star" ? "star" : n.kind === "center" ? "structure" : "galaxy"}: {n.name}
               </p>
               <p className="mt-0.5 font-mono text-[11px] tabular-nums text-muted">
-                RA {formatRa(origin.raHours)} · Dec {formatDec(origin.decDeg)} · {n.sepDeg.toFixed(1)}° off
+                RA {formatRa(origin.raHours)}  |  Dec {formatDec(origin.decDeg)}  |  {n.sepDeg.toFixed(1)} deg off
               </p>
               <p className="mt-1 text-xs leading-relaxed text-muted">
-                {n.note}. Radiant az {origin.radiantAz?.toFixed(0)}° / el {origin.radiantEl?.toFixed(0)}°. {origin.note}
+                {n.note}. Radiant az {origin.radiantAz?.toFixed(0)} deg / el {origin.radiantEl?.toFixed(0)} deg. {origin.note}
               </p>
             </>
           ) : (
@@ -185,7 +185,7 @@ function RadiantDial({
       <circle cx={r} cy={r} r={2.2} className="fill-fg" />
       {el != null && (
         <text x={r} y={70} textAnchor="middle" className="fill-candidate" fontSize={8}>
-          {Math.round(el)}° el
+          {Math.round(el)} deg el
         </text>
       )}
     </svg>
@@ -197,12 +197,11 @@ function AutoReport({ contact }: { contact: Contact }) {
   const chance = uapProbability(contact);
   const candidate = isUapCandidate(contact);
   const origin = useMemo(() => skyOrigin(contact), [contact]);
-  const ran = useRef<number | null>(null);
   const liveHit = contact.liveVerdict ?? null;
 
   const originLine =
     origin.nearest && origin.raHours != null
-      ? `${origin.nearest.name} (${origin.nearest.kind}) ${origin.nearest.sepDeg.toFixed(1)}° from radiant RA ${formatRa(origin.raHours)} Dec ${formatDec(origin.decDeg ?? 0)}`
+      ? `${origin.nearest.name} (${origin.nearest.kind}) ${origin.nearest.sepDeg.toFixed(1)} deg from radiant RA ${formatRa(origin.raHours)} Dec ${formatDec(origin.decDeg ?? 0)}`
       : origin.note;
 
   const run = useMutation({
@@ -309,37 +308,30 @@ function AutoReport({ contact }: { contact: Contact }) {
     },
   });
 
+  // Keep live-path filing for uap-candidate hits; do NOT auto-run ensemble/AI on open.
   useEffect(() => {
-    if (liveHit) {
-      if (liveHit.verdict === "uap-candidate" && !filed.has(contact.id)) {
-        void fileUapAssessment({
-          data: {
-            lat: contact.lat,
-            lng: contact.lng,
-            locationLabel: contact.locationLabel,
-            region: contact.region,
-            summary: `${contact.summary}\n\nLIVE AI: ${liveHit.assessment}\nOptical: ${liveHit.opticalNotes}`,
-            shape: contact.shape,
-            source: contact.source,
-            confidence: liveHit.confidence,
-            assessment: liveHit.assessment,
-            likelyOrigin: liveHit.likelyOrigin,
-            threat: liveHit.threat,
-          },
-        }).then((res) => {
-          if (res && !("error" in res)) {
-            filed.add(contact.id);
-            void qc.invalidateQueries({ queryKey: ["sightings"] });
-          }
-        });
+    if (!liveHit) return;
+    if (liveHit.verdict !== "uap-candidate" || filed.has(contact.id)) return;
+    void fileUapAssessment({
+      data: {
+        lat: contact.lat,
+        lng: contact.lng,
+        locationLabel: contact.locationLabel,
+        region: contact.region,
+        summary: `${contact.summary}\n\nLIVE AI: ${liveHit.assessment}\nOptical: ${liveHit.opticalNotes}`,
+        shape: contact.shape,
+        source: contact.source,
+        confidence: liveHit.confidence,
+        assessment: liveHit.assessment,
+        likelyOrigin: liveHit.likelyOrigin,
+        threat: liveHit.threat,
+      },
+    }).then((res) => {
+      if (res && !("error" in res)) {
+        filed.add(contact.id);
+        void qc.invalidateQueries({ queryKey: ["sightings"] });
       }
-      return;
-    }
-    if (ran.current === contact.id) return;
-    ran.current = contact.id;
-    const t = window.setTimeout(() => run.mutate(), 1200);
-    return () => window.clearTimeout(t);
-    // Fire once per selected contact unless live AI already scored it.
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contact.id, liveHit?.verdict, liveHit?.at]);
 
@@ -356,8 +348,8 @@ function AutoReport({ contact }: { contact: Contact }) {
     <div className="mx-4 mb-3 rounded-xl border border-border bg-surface p-3">
       <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">
         {candidate ? "Auto-filed UAP assessment" : "AI assessment"}
-        {liveHit ? " · live optical" : ""}
-        {result ? ` · ${result.threat}` : pending ? " · running" : ""}
+        {liveHit ? "  |  live optical" : ""}
+        {result ? `  |  ${result.threat}` : pending ? "  |  running" : ""}
       </p>
       {pending && !result && <div className="mt-2 h-8 rounded-md scan-shimmer" />}
       {result && (

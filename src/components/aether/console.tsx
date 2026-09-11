@@ -39,7 +39,44 @@ import { cn } from "@/lib/utils";
 type Panel = "feed" | "optical" | "report" | "floor" | "brief";
 type Epoch = "all" | "live" | "archive";
 
+type Layers = {
+  traffic: boolean;
+  sondes: boolean;
+  sats: boolean;
+  optics: boolean;
+  archive: boolean;
+};
+
+const LAYERS_KEY = "aether-layers-v1";
+const DEFAULT_LAYERS: Layers = {
+  traffic: false,
+  sondes: true,
+  sats: true,
+  optics: true,
+  archive: true,
+};
+
+function loadLayers(): Layers {
+  if (typeof window === "undefined") return DEFAULT_LAYERS;
+  try {
+    const raw = localStorage.getItem(LAYERS_KEY);
+    if (!raw) return DEFAULT_LAYERS;
+    const parsed = JSON.parse(raw) as Partial<Layers>;
+    return { ...DEFAULT_LAYERS, ...parsed };
+  } catch {
+    return DEFAULT_LAYERS;
+  }
+}
+
 const NO_OVERLAY: { lat: number; lng: number }[] = [];
+
+const LAYER_TOGGLES: { key: keyof Layers; label: string }[] = [
+  { key: "traffic", label: "ADS-B" },
+  { key: "sondes", label: "Sondes" },
+  { key: "sats", label: "Sats" },
+  { key: "optics", label: "Optics" },
+  { key: "archive", label: "Archive" },
+];
 
 export function Console({ initial }: { initial: Sighting[] }) {
   const qc = useQueryClient();
@@ -51,7 +88,7 @@ export function Console({ initial }: { initial: Sighting[] }) {
   const live = useQuery({
     queryKey: ["live"],
     queryFn: () => getLivePicture(),
-    refetchInterval: 30_000,
+    refetchInterval: 45_000,
     refetchIntervalInBackground: false,
     retry: 1,
     staleTime: 20_000,
@@ -65,9 +102,25 @@ export function Console({ initial }: { initial: Sighting[] }) {
   const [panel, setPanel] = useState<Panel>("feed");
   const [pickMode, setPickMode] = useState(false);
   const [pick, setPick] = useState<{ lat: number; lng: number } | null>(null);
-  const [showTraffic, setShowTraffic] = useState(false);
+  const [layers, setLayers] = useState<Layers>(DEFAULT_LAYERS);
   const [pushOn, setPushOn] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
+
+  useEffect(() => {
+    setLayers(loadLayers());
+  }, []);
+
+  const setLayer = useCallback((key: keyof Layers, value: boolean) => {
+    setLayers((prev) => {
+      const next = { ...prev, [key]: value };
+      try {
+        localStorage.setItem(LAYERS_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore quota */
+      }
+      return next;
+    });
+  }, []);
 
   const archive = useMemo(
     () => (sightings.data ?? []).map((s) => asContact(s)),
@@ -88,7 +141,7 @@ export function Console({ initial }: { initial: Sighting[] }) {
   });
   const liveOptics = useQuery({
     queryKey: ["live-optics"],
-    enabled: liveDetections.length > 0 && panel === "optical",
+    enabled: layers.optics && liveDetections.length > 0,
     queryFn: () =>
       liveOpticsForTracks({
         data: { items: liveDetections.slice(0, 2).map(compactContact) },
@@ -134,6 +187,14 @@ export function Console({ initial }: { initial: Sighting[] }) {
       );
     });
   }, [contacts, klass, query, epoch, source]);
+
+  const globeContacts = useMemo(() => {
+    const base =
+      !layers.archive && epoch === "all"
+        ? filtered.filter((c) => c.live)
+        : filtered;
+    return base.slice(0, 60);
+  }, [filtered, layers.archive, epoch]);
 
   const selected = contacts.find((s) => s.id === selectedId) ?? null;
   const autoOpened = useRef<Set<number>>(new Set());
@@ -313,6 +374,7 @@ export function Console({ initial }: { initial: Sighting[] }) {
   });
 
   const overlayCameras = useMemo(() => {
+    if (!layers.optics) return NO_OVERLAY;
     const m = new Map<string, { lat: number; lng: number }>();
     for (const t of liveOptics.data ?? []) {
       for (const c of [...t.cameras, ...t.satelliteViews]) {
@@ -322,7 +384,7 @@ export function Console({ initial }: { initial: Sighting[] }) {
     }
     for (const c of watch.data?.cameras ?? []) m.set(c.id, { lat: c.lat, lng: c.lng });
     return [...m.values()];
-  }, [liveOptics.data, watch.data?.cameras]);
+  }, [layers.optics, liveOptics.data, watch.data?.cameras]);
 
   const onPick = useCallback((lat: number, lng: number) => {
     setPick({ lat, lng });
@@ -370,13 +432,6 @@ export function Console({ initial }: { initial: Sighting[] }) {
             {pushOn ? "Alerts on" : "Enable alerts"}
           </Button>
           <Button
-            variant={showTraffic ? "default" : "secondary"}
-            size="sm"
-            onClick={() => setShowTraffic((v) => !v)}
-          >
-            ADS-B layer
-          </Button>
-          <Button
             variant={panel === "brief" ? "default" : "secondary"}
             size="sm"
             onClick={() => setPanel("brief")}
@@ -398,6 +453,27 @@ export function Console({ initial }: { initial: Sighting[] }) {
       </header>
 
       <StreamRail streams={live.data?.streams ?? []} />
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-surface px-3 py-1.5 sm:px-4">
+        <span className="mr-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
+          Layers
+        </span>
+        {LAYER_TOGGLES.map(({ key, label }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setLayer(key, !layers[key])}
+            className={cn(
+              "h-7 rounded-full border px-2.5 font-mono text-[10px] uppercase tracking-[0.12em] transition-colors",
+              layers[key]
+                ? "border-accent/40 bg-raised text-fg"
+                : "border-border text-muted hover:text-fg",
+            )}
+            aria-pressed={layers[key]}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       <LiveSensorRail
         verdicts={[...verdictById.values()]}
         pending={sweep.isFetching}
@@ -413,14 +489,22 @@ export function Console({ initial }: { initial: Sighting[] }) {
           setPanel("optical");
         }}
       />
-      <LiveOpticsStrip
-        tracks={liveOptics.data ?? []}
-        pending={liveOptics.isFetching && !(liveOptics.data && liveOptics.data.length > 0)}
-        onOpen={(id) => {
-          setSelectedId(id);
-          setPanel("optical");
-        }}
-      />
+      {layers.optics ? (
+        <LiveOpticsStrip
+          tracks={liveOptics.data ?? []}
+          pending={liveOptics.isFetching && !(liveOptics.data && liveOptics.data.length > 0)}
+          onOpen={(id) => {
+            setSelectedId(id);
+            setPanel("optical");
+          }}
+        />
+      ) : (
+        <div className="border-b border-border bg-surface px-3 py-2 sm:px-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
+            Optics layer off
+          </p>
+        </div>
+      )}
 
       <section className="grid grid-cols-2 gap-px border-b border-border bg-border sm:grid-cols-4">
         <Stat label="Fused contacts" value={stats.total} />
@@ -437,17 +521,17 @@ export function Console({ initial }: { initial: Sighting[] }) {
             </div>
           ) : (
             <Globe
-              contacts={filtered.slice(0, 80)}
+              contacts={globeContacts}
               selectedId={selected?.id ?? null}
               onSelect={onGlobeSelect}
               pickMode={pickMode}
               onPick={onPick}
-              aircraft={showTraffic ? (live.data?.aircraft ?? NO_OVERLAY) : NO_OVERLAY}
-              balloons={live.data?.balloons ?? NO_OVERLAY}
-              satellites={live.data?.satellites ?? NO_OVERLAY}
-              iss={live.data?.iss ?? null}
+              aircraft={layers.traffic ? (live.data?.aircraft ?? NO_OVERLAY) : NO_OVERLAY}
+              balloons={layers.sondes ? (live.data?.balloons ?? NO_OVERLAY) : NO_OVERLAY}
+              satellites={layers.sats ? (live.data?.satellites ?? NO_OVERLAY) : NO_OVERLAY}
+              iss={layers.sats ? (live.data?.iss ?? null) : null}
               cameras={overlayCameras}
-              showTraffic={showTraffic}
+              showTraffic={layers.traffic}
             />
           )}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-between p-3 sm:p-4">
@@ -455,11 +539,17 @@ export function Console({ initial }: { initial: Sighting[] }) {
               {pickMode ? "Tap globe to lock coordinates" : "Tap a plot to inspect"}
             </p>
             <p className="rounded-md border border-border bg-bg/80 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
-              {live.data?.iss
+              {layers.sats && live.data?.iss
                 ? `ISS ${live.data.iss.lat.toFixed(1)}°, ${live.data.iss.lng.toFixed(1)}°`
-                : "ISS acquiring"}
-              {live.data?.balloons?.length ? ` · ${live.data.balloons.length} sondes` : ""}
-              {overlayCameras.length ? ` · ${overlayCameras.length} cams` : ""}
+                : layers.sats
+                  ? "ISS acquiring"
+                  : "Sats off"}
+              {layers.sondes && live.data?.balloons?.length
+                ? ` · ${live.data.balloons.length} sondes`
+                : ""}
+              {layers.optics && overlayCameras.length
+                ? ` · ${overlayCameras.length} cams`
+                : ""}
             </p>
           </div>
         </section>

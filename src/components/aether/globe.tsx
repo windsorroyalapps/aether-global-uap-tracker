@@ -33,15 +33,15 @@ function token(name: string, fallback: string) {
 
 function dest(lat: number, lng: number, bearingDeg: number, distKm: number) {
   const R = 6371;
-  const δ = distKm / R;
-  const θ = (bearingDeg * Math.PI) / 180;
-  const φ1 = (lat * Math.PI) / 180;
-  const λ1 = (lng * Math.PI) / 180;
-  const φ2 = Math.asin(Math.sin(φ1) * Math.cos(δ) + Math.cos(φ1) * Math.sin(δ) * Math.cos(θ));
-  const λ2 =
-    λ1 +
-    Math.atan2(Math.sin(θ) * Math.sin(δ) * Math.cos(φ1), Math.cos(δ) - Math.sin(φ1) * Math.sin(φ2));
-  return { lat: (φ2 * 180) / Math.PI, lng: (((λ2 * 180) / Math.PI + 540) % 360) - 180 };
+  const delta = distKm / R;
+  const theta = (bearingDeg * Math.PI) / 180;
+  const phi1 = (lat * Math.PI) / 180;
+  const lam1 = (lng * Math.PI) / 180;
+  const phi2 = Math.asin(Math.sin(phi1) * Math.cos(delta) + Math.cos(phi1) * Math.sin(delta) * Math.cos(theta));
+  const lam2 =
+    lam1 +
+    Math.atan2(Math.sin(theta) * Math.sin(delta) * Math.cos(phi1), Math.cos(delta) - Math.sin(phi1) * Math.sin(phi2));
+  return { lat: (phi2 * 180) / Math.PI, lng: (((lam2 * 180) / Math.PI + 540) % 360) - 180 };
 }
 
 export const Globe = memo(function Globe({
@@ -384,6 +384,15 @@ export const Globe = memo(function Globe({
     document.addEventListener("visibilitychange", onVis);
 
     resize();
+    // Double rAF so canvas picks up settled flex height (blank map if first resize was 0).
+    requestAnimationFrame(() => {
+      resize();
+      kick.current();
+      requestAnimationFrame(() => {
+        resize();
+        kick.current();
+      });
+    });
     const ro = new ResizeObserver(resize);
     ro.observe(wrap);
 
