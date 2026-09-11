@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { exportSnapshot, ingestReplica, listLedger, listQueue, listSnapshots, reviewReport, sealServerBackup, type ReplicaRecord } from "@/lib/uap/archive";
-import { armNativePush } from "@/lib/uap/alerts";
+import { ensureServiceWorker } from "@/lib/uap/alerts";
 import { aiReviewReport, PROVIDER_IDS, type ProviderKeys } from "@/lib/uap/ensemble";
 import { officerLogin, officerSession } from "@/lib/uap/officer";
 import { clearOfficer, loadOfficer, saveOfficer, type OfficerSession } from "@/lib/uap/officer-session";
@@ -92,9 +92,7 @@ export function FloorPanel() {
       setSession(next);
       setPass("");
       toast.success(`Watch officer ${res.callsign} on duty`);
-      void armNativePush().then((perm) => {
-        if (perm === "granted") toast.message("Native push armed for elevated alerts");
-      });
+      void ensureServiceWorker();
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -310,7 +308,7 @@ export function FloorPanel() {
           <article key={s.id} className="space-y-2 rounded-lg border border-border p-2.5">
             <div className="flex items-start justify-between gap-2">
               <p className="text-sm font-medium">{s.locationLabel}</p>
-              <Badge variant={s.reviewStatus === "held" ? "watch" : "default"}>{s.reviewStatus}</Badge>
+              <Badge variant={s.reviewStatus === "held" ? "watch" : "default">{s.reviewStatus}</Badge>
             </div>
             <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
               {formatWhen(s.occurredAt)} · {s.region}
