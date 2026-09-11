@@ -1,43 +1,30 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Activity,
-  Crosshair,
-  Filter,
-  Globe2,
-  MapPin,
-  Radar,
-  Sparkles,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Crosshair, Radar, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Globe } from "@/components/aether/globe";
 import { FloorPanel } from "@/components/aether/floor";
 import { InspectPanel } from "@/components/aether/inspect";
+import {
+  ElevatedRail,
+  LiveSensorRail,
+  StreamRail,
+  Stat,
+  Feed,
+  BriefingPanel,
+  ReportForm,
+} from "@/components/aether/console-rails";
 import { LiveOpticsStrip } from "@/components/aether/optics";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
-import { Textarea } from "@/components/ui/textarea";
-import { analyzeContact, analyzeLiveEvent, generateBriefing, getAnalysis } from "@/lib/uap/analyze";
-import {
-  classLabel,
-  classTone,
-  coords,
-  formatDuration,
-  formatWhen,
-  sourceLabel,
-} from "@/lib/uap/format";
 import { getLivePicture, getWatchContext, liveOpticsForTracks, sweepLiveSensors } from "@/lib/uap/live";
 import { compactContact } from "@/lib/uap/live-sensor";
-import { fileReport, listSightings } from "@/lib/uap/queries";
+import { listSightings } from "@/lib/uap/queries";
 import { listQueue } from "@/lib/uap/archive";
-import { classifyAlert, pageNative, shouldPage, armNativePush, tabHidden, type AlertEvent } from "@/lib/uap/alerts";
+import { classifyAlert, pageNative, shouldPage, armNativePush, tabHidden } from "@/lib/uap/alerts";
 import { dutyReviewPending } from "@/lib/uap/ensemble";
-import { asContact, CLASSIFICATIONS, SHAPES, SOURCES } from "@/lib/uap/types";
-import { isUapCandidate, uapProbability } from "@/lib/uap/infer";
-import type { Classification, Contact, LiveVerdict, Shape, Sighting, Source, StreamHealth } from "@/lib/uap/types";
+import { asContact } from "@/lib/uap/types";
+import type { Classification, Contact, LiveVerdict, Sighting, Source } from "@/lib/uap/types";
 import { cn } from "@/lib/utils";
 
 type Panel = "feed" | "optical" | "report" | "floor" | "brief";
