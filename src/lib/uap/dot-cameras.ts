@@ -50,7 +50,7 @@ const QUERY = encodeURIComponent(
     columns: [{ name: "sortId" }],
     order: [],
     start: 0,
-    length: 5000,
+    length: 800,
     search: { value: "" },
   }),
 );
