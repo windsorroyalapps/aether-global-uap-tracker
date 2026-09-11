@@ -94,7 +94,7 @@ type AlertFeature = {
 async function loadAlertCA(): Promise<ResolvedCam[]> {
   return cached("alertca-index", 15 * 60_000, async () => {
     const url =
-      "https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/ArcGIS/rest/services/AlertCA_Cameras_Updated_Includes_Last_Moved_view/FeatureServer/0/query?where=camPrivate=0+AND+camOffline=0&outFields=camName,camHostname,camAzimuth,camOffline,camPrivate,camCounty,imgFullURL,liveCameraURL&returnGeometry=true&outSR=4326&f=json&resultRecordCount=2000";
+      "https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/ArcGIS/rest/services/AlertCA_Cameras_Updated_Includes_Last_Moved_view/FeatureServer/0/query?where=camPrivate=0+AND+camOffline=0&outFields=camName,camHostname,camAzimuth,camOffline,camPrivate,camCounty,imgFullURL,liveCameraURL&returnGeometry=true&outSR=4326&f=json&resultRecordCount=600";
     const json = await fetchJson<{ features?: AlertFeature[] }>(url, { timeoutMs: 12000 });
     const out: ResolvedCam[] = [];
     for (const f of json.features ?? []) {
@@ -314,6 +314,13 @@ function prefixFor(cam: ResolvedCam) {
   return "catalog";
 }
 
+function settleCams(p: Promise<ResolvedCam[]>, ms = 4000): Promise<ResolvedCam[]> {
+  return Promise.race([
+    p,
+    new Promise<ResolvedCam[]>((resolve) => setTimeout(() => resolve([]), ms)),
+  ]);
+}
+
 export async function camerasNear(
   lat: number,
   lng: number,
@@ -321,12 +328,12 @@ export async function camerasNear(
 ): Promise<{ ground: CameraHit[]; space: CameraHit[]; total: number }> {
   const tasks: Promise<ResolvedCam[]>[] = [];
   if (inCalifornia(lat, lng)) {
-    tasks.push(loadAlertCA().catch(() => []));
-    tasks.push(loadCaltrans(lat, lng).catch(() => []));
+    tasks.push(settleCams(loadAlertCA().catch(() => [])));
+    tasks.push(settleCams(loadCaltrans(lat, lng).catch(() => [])));
   }
-  if (inNyc(lat, lng)) tasks.push(loadNyc().catch(() => []));
-  if (inLondon(lat, lng)) tasks.push(loadTfl().catch(() => []));
-  tasks.push(loadRegionalDotCameras(lat, lng).catch(() => []));
+  if (inNyc(lat, lng)) tasks.push(settleCams(loadNyc().catch(() => [])));
+  if (inLondon(lat, lng)) tasks.push(settleCams(loadTfl().catch(() => [])));
+  tasks.push(settleCams(loadRegionalDotCameras(lat, lng).catch(() => [])));
 
   const extra = (await Promise.all(tasks)).flat();
   const pool: { id: string; cam: ResolvedCam }[] = [

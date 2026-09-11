@@ -141,7 +141,7 @@ export const liveOpticsForTracks = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<LiveTrackOptics[]> => {
     const ranked = [...data.items]
       .sort((a, b) => (b.residual ?? 0) - (a.residual ?? 0))
-      .slice(0, 6);
+      .slice(0, 2);
     return Promise.all(
       ranked.map(async (c) => {
         const optics = await camerasNear(c.lat, c.lng, c.altitudeM).catch(() => ({

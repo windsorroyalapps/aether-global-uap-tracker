@@ -337,7 +337,8 @@ function AutoReport({ contact }: { contact: Contact }) {
     }
     if (ran.current === contact.id) return;
     ran.current = contact.id;
-    run.mutate();
+    const t = window.setTimeout(() => run.mutate(), 1200);
+    return () => window.clearTimeout(t);
     // Fire once per selected contact unless live AI already scored it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contact.id, liveHit?.verdict, liveHit?.at]);
@@ -374,7 +375,17 @@ function AutoReport({ contact }: { contact: Contact }) {
         </>
       )}
       {!pending && !result && (
-        <p className="mt-2 text-sm text-muted">Assessment unavailable in this environment.</p>
+        run.isError ? (
+          <p className="mt-2 text-sm text-muted">Assessment unavailable in this environment.</p>
+        ) : (
+          <button
+            type="button"
+            className="mt-2 inline-flex h-9 items-center rounded-md border border-border bg-bg px-3 text-sm text-fg hover:bg-raised"
+            onClick={() => run.mutate()}
+          >
+            Run assessment
+          </button>
+        )
       )}
     </div>
   );
