@@ -16,7 +16,7 @@ export async function runDutyCycle() {
   let pushSent = 0;
   let pushSkipped = 0;
   try {
-    for (const c of picture.detections) {
+    for (const c of sealed.sealed) {
       const ev = classifyAlert(c);
       if (ev.tier !== "candidate" && ev.tier !== "elevated") continue;
       const allow = await shouldSendServerPush(ev);

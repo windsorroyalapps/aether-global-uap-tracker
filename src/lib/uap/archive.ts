@@ -315,6 +315,7 @@ export async function sealLiveContacts(list: Contact[]) {
   const sql = await getSql();
   let inserted = 0;
   let skipped = 0;
+  const sealed: Contact[] = [];
   for (const c of list.slice(0, 40)) {
     const residual = c.residual ?? c.confidence;
     if (c.source !== "fireball" && c.source !== "social" && residual < 28) {
@@ -343,13 +344,14 @@ export async function sealLiveContacts(list: Contact[]) {
       `;
       if (rows[0]) {
         inserted += 1;
+        sealed.push({ ...c, id: rows[0].id });
         await logLedger(rows[0].id, "duty-seal", "duty", "auto ingest — no deletions", hash);
       }
     } catch {
       skipped += 1;
     }
   }
-  return { inserted, skipped };
+  return { inserted, skipped, sealed };
 }
 
 export async function writeServerBackup() {

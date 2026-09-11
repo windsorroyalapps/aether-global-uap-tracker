@@ -30,6 +30,7 @@ import {
   isPushOptedIn,
   tabHidden,
 } from "@/lib/uap/alerts";
+import { notifyLiveContacts } from "@/lib/uap/push-api";
 import { dutyReviewPending } from "@/lib/uap/ensemble";
 import { asContact } from "@/lib/uap/types";
 import type { Classification, Contact, LiveVerdict, Sighting, Source } from "@/lib/uap/types";
@@ -136,6 +137,7 @@ export function Console({ initial }: { initial: Sighting[] }) {
 
   const selected = contacts.find((s) => s.id === selectedId) ?? null;
   const autoOpened = useRef<Set<number>>(new Set());
+  const notifiedPushIds = useRef<Set<number>>(new Set());
   const queue = useQuery({
     queryKey: ["queue"],
     queryFn: () => listQueue(),
@@ -231,6 +233,41 @@ export function Console({ initial }: { initial: Sighting[] }) {
     void qc.invalidateQueries({ queryKey: ["queue"] });
     void qc.invalidateQueries({ queryKey: ["sightings"] });
   }, [duty.data?.reviewed, duty.data?.label, qc]);
+
+  useEffect(() => {
+    const fresh = contacts
+      .filter((c) => c.live && !notifiedPushIds.current.has(c.id))
+      .filter((c) => {
+        const ev = classifyAlert(c);
+        return ev.tier === "candidate" || ev.tier === "elevated";
+      })
+      .slice(0, 8);
+    if (fresh.length === 0) return;
+    for (const c of fresh) notifiedPushIds.current.add(c.id);
+    void notifyLiveContacts({
+      data: {
+        items: fresh.map((c) => ({
+          id: c.id,
+          locationLabel: c.locationLabel,
+          residual: c.residual ?? c.confidence,
+          confidence: c.confidence,
+          classification: c.classification,
+          source: c.source,
+          lat: c.lat,
+          lng: c.lng,
+          shape: c.shape,
+          summary: c.summary.slice(0, 500),
+          reasons: c.reasons ?? [],
+          durationSec: c.durationSec,
+          altitudeM: c.altitudeM ?? null,
+          speedKts: c.speedKts ?? null,
+          headingDeg: c.headingDeg ?? null,
+          verticalFpm: c.verticalFpm ?? null,
+          liveVerdict: c.liveVerdict ?? null,
+        })),
+      },
+    }).catch(() => undefined);
+  }, [contacts]);
 
   useEffect(() => {
     const liveIds = new Set(liveDetections.map((d) => d.id));
