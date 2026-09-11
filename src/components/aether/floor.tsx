@@ -93,7 +93,9 @@ export function FloorPanel() {
       setPass("");
       toast.success(`Watch officer ${res.callsign} on duty`);
       void armNativePush().then((perm) => {
-        if (perm === "granted") toast.message("Native push armed for elevated alerts");
+        if (perm === "subscribed" || perm === "granted") {
+          toast.message("Native push armed for elevated alerts");
+        }
       });
     },
     onError: (e: Error) => toast.error(e.message),
