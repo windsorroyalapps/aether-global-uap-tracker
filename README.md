@@ -6,11 +6,11 @@ Live-fusion console for tracking unidentified anomalous phenomena. AETHER correl
 
 ## 24/7 duty + Web Push alerts
 
-Pushes fire when a **new** contact is sealed (duty) or reported live (open console). The 5-minute duty pulse is only the background detector when nobody has the console open — not an “alert every N minutes” timer.
+Pushes fire when a **new** contact is sealed (duty) or reported live (open console). The frequent duty pulse is only the background detector when nobody has the console open — not an “alert every N minutes” timer.
 
 - **Near-realtime:** with the console open, new `candidate` / `elevated` live contacts call `notifyLiveContacts` (deduped by contact id).
-- **Background discovery:** **Vercel Cron** (`vercel.json`) hits `/api/duty` every 5 minutes (`*/5 * * * *`). On Hobby plans Vercel may only honor hourly crons — if so, keep the GitHub Action as primary.
-- **GitHub Actions** (`.github/workflows/duty-24h.yml`) also curls `/api/duty` every 5 minutes (GH Actions minimum; primary backup / Hobby-safe).
+- **Background discovery (primary):** **GitHub Actions** (`.github/workflows/duty-24h.yml`) curls `/api/duty` every 5 minutes (`*/5 * * * *`). This is the Hobby-safe 24/7 pulse.
+- **Vercel Cron** (`vercel.json`) also hits `/api/duty` once daily (`0 0 * * *` UTC). Hobby accounts cannot schedule more than once per day; keep the GitHub Action as the frequent detector.
 - Duty still seals live contacts and writes a server backup every pulse; **Web Push** fans out only for **newly sealed** `candidate` / `elevated` contacts (8-minute cooldown, escalation, or residual jump ≥10).
 
 ### Opt-in alerts (phone / PWA)
