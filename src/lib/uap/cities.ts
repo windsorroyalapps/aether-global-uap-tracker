@@ -77,5 +77,52 @@ export function geoparse(text: string) {
       }
     }
   }
-  return best;
+  if (best) return best;
+  for (const c of COUNTRIES) {
+    const idx = t.indexOf(c.name.toLowerCase());
+    if (idx >= 0) return { name: c.name, lat: c.lat, lng: c.lng, idx };
+  }
+  return null;
+}
+
+const COUNTRIES: { name: string; lat: number; lng: number }[] = [
+  { name: "United States", lat: 39.8, lng: -98.6 },
+  { name: "USA", lat: 39.8, lng: -98.6 },
+  { name: "America", lat: 39.8, lng: -98.6 },
+  { name: "Canada", lat: 56.1, lng: -106.3 },
+  { name: "Mexico", lat: 23.6, lng: -102.5 },
+  { name: "United Kingdom", lat: 54.0, lng: -2.5 },
+  { name: "Britain", lat: 54.0, lng: -2.5 },
+  { name: "England", lat: 52.5, lng: -1.5 },
+  { name: "Australia", lat: -25.3, lng: 133.8 },
+  { name: "New Zealand", lat: -41.3, lng: 174.8 },
+  { name: "Tasman", lat: -40.0, lng: 160.0 },
+  { name: "Japan", lat: 36.2, lng: 138.3 },
+  { name: "China", lat: 35.9, lng: 104.2 },
+  { name: "India", lat: 20.6, lng: 79.0 },
+  { name: "Brazil", lat: -14.2, lng: -51.9 },
+  { name: "France", lat: 46.2, lng: 2.2 },
+  { name: "Germany", lat: 51.2, lng: 10.4 },
+  { name: "Italy", lat: 41.9, lng: 12.6 },
+  { name: "Spain", lat: 40.5, lng: -3.7 },
+  { name: "Norway", lat: 60.5, lng: 8.5 },
+  { name: "Sweden", lat: 60.1, lng: 18.6 },
+  { name: "Ukraine", lat: 48.4, lng: 31.2 },
+  { name: "Russia", lat: 61.5, lng: 105.3 },
+  { name: "Iran", lat: 32.4, lng: 53.7 },
+  { name: "Israel", lat: 31.0, lng: 35.0 },
+  { name: "Egypt", lat: 26.8, lng: 30.8 },
+  { name: "South Africa", lat: -30.6, lng: 22.9 },
+  { name: "Pacific", lat: 0, lng: -160 },
+  { name: "Atlantic", lat: 20, lng: -40 },
+];
+
+export function locateNews(text: string, country?: string | null) {
+  const fromTitle = geoparse(text);
+  if (fromTitle) return fromTitle;
+  if (country) {
+    const fromCountry = geoparse(country);
+    if (fromCountry) return fromCountry;
+  }
+  return { name: "Unlocated media", lat: 12.0, lng: -32.0, idx: -1 };
 }

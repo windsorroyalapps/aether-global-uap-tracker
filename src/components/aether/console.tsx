@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
@@ -33,8 +33,8 @@ import { getLivePicture, getWatchContext, liveOpticsForTracks, sweepLiveSensors 
 import { compactContact } from "@/lib/uap/live-sensor";
 import { fileReport, listSightings } from "@/lib/uap/queries";
 import { listQueue } from "@/lib/uap/archive";
-import { classifyAlert, pageNative, shouldPage, type AlertEvent } from "@/lib/uap/alerts";
-import { loadOfficer } from "@/lib/uap/officer-session";
+import { classifyAlert, pageNative, shouldPage, armNativePush, tabHidden, type AlertEvent } from "@/lib/uap/alerts";
+import { dutyReviewPending } from "@/lib/uap/ensemble";
 import { asContact, CLASSIFICATIONS, SHAPES, SOURCES } from "@/lib/uap/types";
 import { isUapCandidate, uapProbability } from "@/lib/uap/infer";
 import type { Classification, Contact, LiveVerdict, Shape, Sighting, Source, StreamHealth } from "@/lib/uap/types";
@@ -42,6 +42,8 @@ import { cn } from "@/lib/utils";
 
 type Panel = "feed" | "optical" | "report" | "floor" | "brief";
 type Epoch = "all" | "live" | "archive";
+
+const NO_OVERLAY: { lat: number; lng: number }[] = [];
 
 export function Console({ initial }: { initial: Sighting[] }) {
   const qc = useQueryClient();
@@ -53,8 +55,10 @@ export function Console({ initial }: { initial: Sighting[] }) {
   const live = useQuery({
     queryKey: ["live"],
     queryFn: () => getLivePicture(),
-    refetchInterval: 20_000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: true,
     retry: 1,
+    staleTime: 20_000,
   });
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -65,7 +69,7 @@ export function Console({ initial }: { initial: Sighting[] }) {
   const [panel, setPanel] = useState<Panel>("feed");
   const [pickMode, setPickMode] = useState(false);
   const [pick, setPick] = useState<{ lat: number; lng: number } | null>(null);
-  const [showTraffic, setShowTraffic] = useState(true);
+  const [showTraffic, setShowTraffic] = useState(false);
 
   const archive = useMemo(
     () => (sightings.data ?? []).map((s) => asContact(s)),
@@ -73,25 +77,27 @@ export function Console({ initial }: { initial: Sighting[] }) {
   );
   const liveDetections = live.data?.detections ?? [];
   const sweep = useQuery({
-    queryKey: ["live-sweep", liveDetections.map((c) => c.id).join("-")],
+    queryKey: ["live-sweep"],
     enabled: liveDetections.length > 0,
     queryFn: () =>
       sweepLiveSensors({
-        data: { items: liveDetections.slice(0, 8).map(compactContact) },
+        data: { items: liveDetections.slice(0, 4).map(compactContact) },
       }),
-    refetchInterval: 18_000,
-    staleTime: 8_000,
+    refetchInterval: 45_000,
+    refetchIntervalInBackground: true,
+    staleTime: 30_000,
     retry: 0,
   });
   const liveOptics = useQuery({
-    queryKey: ["live-optics", liveDetections.map((c) => c.id).join("-")],
-    enabled: liveDetections.length > 0,
+    queryKey: ["live-optics"],
+    enabled: liveDetections.length > 0 && panel === "optical",
     queryFn: () =>
       liveOpticsForTracks({
-        data: { items: liveDetections.slice(0, 6).map(compactContact) },
+        data: { items: liveDetections.slice(0, 2).map(compactContact) },
       }),
-    refetchInterval: 24_000,
-    staleTime: 12_000,
+    refetchInterval: 90_000,
+    refetchIntervalInBackground: false,
+    staleTime: 60_000,
     retry: 0,
   });
   const verdictById = useMemo(() => {
@@ -133,7 +139,24 @@ export function Console({ initial }: { initial: Sighting[] }) {
 
   const selected = contacts.find((s) => s.id === selectedId) ?? null;
   const autoOpened = useRef<Set<number>>(new Set());
-  const queue = useQuery({ queryKey: ["queue"], queryFn: () => listQueue(), refetchInterval: 20_000 });
+  const queue = useQuery({
+    queryKey: ["queue"],
+    queryFn: () => listQueue(),
+    refetchInterval: 45_000,
+    refetchIntervalInBackground: true,
+  });
+  const duty = useQuery({
+    queryKey: ["duty-review"],
+    queryFn: () => dutyReviewPending(),
+    refetchInterval: 90_000,
+    refetchIntervalInBackground: true,
+    retry: 0,
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    void armNativePush();
+  }, []);
 
   const alerts = useMemo(
     () => contacts.filter((c) => c.live).map(classifyAlert),
@@ -142,45 +165,57 @@ export function Console({ initial }: { initial: Sighting[] }) {
   const elevated = alerts.filter((a) => a.tier === "elevated");
   const pendingN = (queue.data ?? []).filter((s) => s.reviewStatus === "pending").length;
 
+  const alertSig = alerts.map((a) => `${a.contactId}:${a.tier}`).join("|");
   useEffect(() => {
-    const officer = loadOfficer();
+    const hidden = tabHidden();
+    let first = true;
     for (const ev of alerts) {
       if (!shouldPage(ev)) continue;
+      if (hidden || ev.tier === "elevated") pageNative(ev);
+      if (hidden) continue;
       if (ev.tier === "elevated") {
         toast.error(`Elevated · ${ev.label}`, { description: ev.reason });
-        if (officer) pageNative(ev);
-        setSelectedId(ev.contactId);
-        setPanel((p) => (p === "report" || p === "floor" ? p : "optical"));
-      } else {
+        if (first) {
+          first = false;
+          setSelectedId(ev.contactId);
+        }
+      } else if (ev.tier === "candidate") {
         toast(`Candidate · ${ev.label}`, { description: ev.reason });
       }
     }
-  }, [alerts]);
+    // keyed by alertSig
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alertSig]);
+
+  useEffect(() => {
+    if (!duty.data?.reviewed || !duty.data.label) return;
+    const hidden = tabHidden();
+    const body = `AI sealed ${duty.data.label}`;
+    if (hidden) {
+      pageNative({
+        contactId: duty.data.reviewed,
+        label: duty.data.label,
+        tier: "watch",
+        reason: "duty AI review",
+        key: `duty:${duty.data.reviewed}`,
+        residual: 0,
+      });
+    } else {
+      toast.success(body);
+    }
+    void qc.invalidateQueries({ queryKey: ["queue"] });
+    void qc.invalidateQueries({ queryKey: ["sightings"] });
+  }, [duty.data?.reviewed, duty.data?.label, qc]);
 
   useEffect(() => {
     const liveIds = new Set(liveDetections.map((d) => d.id));
-    const selectedIsArchive =
-      selectedId != null && !liveIds.has(selectedId) && contacts.some((c) => c.id === selectedId);
-    if (selectedIsArchive) return;
-
     const flagged = [...verdictById.values()].find(
       (v) => v.verdict === "uap-candidate" && !autoOpened.current.has(v.contactId) && liveIds.has(v.contactId),
     );
-    if (flagged) {
-      autoOpened.current.add(flagged.contactId);
-      setSelectedId(flagged.contactId);
-      setPanel((p) => (p === "report" || p === "floor" ? p : "optical"));
-      return;
-    }
-
-    if (selectedId != null && liveIds.has(selectedId)) return;
-    const top = [...liveDetections].sort(
-      (a, b) => (b.residual ?? b.confidence) - (a.residual ?? a.confidence),
-    )[0];
-    if (!top) return;
-    setSelectedId(top.id);
-    setPanel((p) => (p === "report" || p === "floor" || p === "brief" ? p : "optical"));
-  }, [liveDetections, verdictById, selectedId, contacts]);
+    if (!flagged) return;
+    autoOpened.current.add(flagged.contactId);
+    toast(`UAP candidate · ${flagged.likelyOrigin}`);
+  }, [liveDetections, verdictById]);
 
   const stats = useMemo(() => {
     const anomalous = contacts.filter((s) => s.classification === "anomalous").length;
@@ -194,7 +229,7 @@ export function Console({ initial }: { initial: Sighting[] }) {
 
   const watch = useQuery({
     queryKey: ["watch", selected?.id],
-    enabled: Boolean(selected),
+    enabled: Boolean(selected) && panel === "optical",
     queryFn: () =>
       getWatchContext({
         data: {
@@ -212,6 +247,7 @@ export function Console({ initial }: { initial: Sighting[] }) {
           locationLabel: selected!.locationLabel,
         },
       }),
+    staleTime: 18_000,
   });
 
   const overlayCameras = useMemo(() => {
@@ -226,12 +262,16 @@ export function Console({ initial }: { initial: Sighting[] }) {
     return [...m.values()];
   }, [liveOptics.data, watch.data?.cameras]);
 
-  const onPick = (lat: number, lng: number) => {
+  const onPick = useCallback((lat: number, lng: number) => {
     setPick({ lat, lng });
     setPickMode(false);
     setPanel("report");
     toast("Coordinates locked from globe");
-  };
+  }, []);
+  const onGlobeSelect = useCallback((id: number) => {
+    setSelectedId(id);
+    setPanel("optical");
+  }, []);
 
   return (
     <div className="flex min-h-dvh flex-col bg-bg">
@@ -256,6 +296,7 @@ export function Console({ initial }: { initial: Sighting[] }) {
         {elevated.length > 0 && (
           <Badge variant="alert">{elevated.length} elevated</Badge>
         )}
+        <Badge variant="live">Duty 24/7</Badge>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button
             variant={showTraffic ? "default" : "secondary"}
@@ -325,17 +366,14 @@ export function Console({ initial }: { initial: Sighting[] }) {
             </div>
           ) : (
             <Globe
-              contacts={filtered}
+              contacts={filtered.slice(0, 80)}
               selectedId={selected?.id ?? null}
-              onSelect={(id) => {
-                setSelectedId(id);
-                setPanel("optical");
-              }}
+              onSelect={onGlobeSelect}
               pickMode={pickMode}
               onPick={onPick}
-              aircraft={live.data?.aircraft ?? []}
-              balloons={live.data?.balloons ?? []}
-              satellites={live.data?.satellites ?? []}
+              aircraft={showTraffic ? (live.data?.aircraft ?? NO_OVERLAY) : NO_OVERLAY}
+              balloons={live.data?.balloons ?? NO_OVERLAY}
+              satellites={live.data?.satellites ?? NO_OVERLAY}
               iss={live.data?.iss ?? null}
               cameras={overlayCameras}
               showTraffic={showTraffic}
@@ -343,7 +381,7 @@ export function Console({ initial }: { initial: Sighting[] }) {
           )}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-between p-3 sm:p-4">
             <p className="pointer-events-auto rounded-md border border-border bg-bg/80 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
-              {pickMode ? "Tap globe to lock coordinates" : "Live residuals auto-open optics"}
+              {pickMode ? "Tap globe to lock coordinates" : "Tap a plot to inspect"}
             </p>
             <p className="rounded-md border border-border bg-bg/80 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
               {live.data?.iss
@@ -623,7 +661,7 @@ function Feed({
         {filtered.length === 0 ? (
           <p className="px-4 py-8 text-sm text-muted">No contacts match this filter.</p>
         ) : (
-          filtered.map((s) => (
+          filtered.slice(0, 80).map((s) => (
             <button
               key={s.id}
               type="button"

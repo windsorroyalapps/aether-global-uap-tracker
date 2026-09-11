@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { geoGraticule10, geoOrthographic, geoPath } from "d3-geo";
 import { feature } from "topojson-client";
 import type { GeometryCollection, Topology } from "topojson-specification";
@@ -44,7 +44,7 @@ function dest(lat: number, lng: number, bearingDeg: number, distKm: number) {
   return { lat: (φ2 * 180) / Math.PI, lng: (((λ2 * 180) / Math.PI + 540) % 360) - 180 };
 }
 
-export function Globe({
+export const Globe = memo(function Globe({
   contacts,
   selectedId,
   onSelect,
@@ -59,12 +59,17 @@ export function Globe({
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const pickRef = useRef(onPick);
+  const selectRef = useRef(onSelect);
+  pickRef.current = onPick;
+  selectRef.current = onSelect;
+  const kick = useRef<() => void>(() => {});
+  const lastSnap = useRef<number | null>(null);
   const state = useRef({
     rot: [-20, -18] as [number, number],
     dragging: false,
     moved: false,
     last: [0, 0],
-    scan: 0,
     hoverId: null as number | null,
     contacts,
     selectedId,
@@ -87,6 +92,29 @@ export function Globe({
   state.current.cameras = cameras;
   state.current.showTraffic = showTraffic;
 
+  if (selectedId != null && selectedId !== lastSnap.current) {
+    const hit = contacts.find((c) => c.id === selectedId);
+    if (hit) {
+      state.current.rot = [-hit.lng, Math.max(-68, Math.min(68, -hit.lat * 0.55))];
+      lastSnap.current = selectedId;
+    }
+  }
+
+  useEffect(() => {
+    const t = window.setTimeout(() => kick.current(), 120);
+    return () => window.clearTimeout(t);
+  }, [
+    contacts,
+    selectedId,
+    pickMode,
+    aircraft,
+    balloons,
+    satellites,
+    iss,
+    cameras,
+    showTraffic,
+  ]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     const wrap = wrapRef.current;
@@ -101,24 +129,26 @@ export function Globe({
     };
     mq.addEventListener("change", onMq);
 
-    let raf = 0;
-    let lastTs = performance.now();
+    const colors = {
+      bg: token("--color-bg", "#09090b"),
+      surface: token("--color-surface", "#121418"),
+      fg: token("--color-fg", "#ecece8"),
+      muted: token("--color-muted", "#8b908c"),
+      accent: token("--color-accent", "#b8c4c0"),
+      signal: token("--color-signal", "#9eb8ae"),
+      alert: token("--color-alert", "#c4897a"),
+      watch: token("--color-watch", "#c4b08a"),
+      candidate: token("--color-candidate", "#3dff6a"),
+    };
 
     const projection = geoOrthographic();
     const path = geoPath(projection, ctx);
     const graticule = geoGraticule10();
-
-    const resize = () => {
-      const rect = wrap.getBoundingClientRect();
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      canvas.width = Math.max(1, Math.floor(rect.width * dpr));
-      canvas.height = Math.max(1, Math.floor(rect.height * dpr));
-      canvas.style.width = `${rect.width}px`;
-      canvas.style.height = `${rect.height}px`;
-    };
-    resize();
-    const ro = new ResizeObserver(resize);
-    ro.observe(wrap);
+    const layer = document.createElement("canvas");
+    const lctx = layer.getContext("2d");
+    let landKey = "";
+    let raf = 0;
+    let hidden = document.visibilityState === "hidden";
 
     const visible = (lng: number, lat: number, w: number, h: number, r: number) => {
       const p = projection([lng, lat]);
@@ -128,38 +158,39 @@ export function Globe({
       return p;
     };
 
-    const draw = (ts: number) => {
-      const dt = Math.min(0.05, (ts - lastTs) / 1000);
-      lastTs = ts;
-      const st = state.current;
-      const selected = st.contacts.find((c) => c.id === st.selectedId);
-      if (selected && !st.dragging) {
-        const wantX = -selected.lng;
-        const wantY = Math.max(-68, Math.min(68, -selected.lat * 0.55));
-        st.rot[0] += (wantX - st.rot[0]) * Math.min(1, dt * 2.4);
-        st.rot[1] += (wantY - st.rot[1]) * Math.min(1, dt * 2.4);
-      } else if (!st.dragging && !st.reduced) {
-        st.rot[0] = (st.rot[0] + dt * 6.2) % 360;
-      }
-      if (!st.reduced) st.scan = (st.scan + dt * (st.dragging ? 18 : 28)) % 360;
+    const resize = () => {
+      const rect = wrap.getBoundingClientRect();
+      const cssW = Math.max(1, Math.floor(rect.width));
+      const cssH = Math.max(1, Math.floor(rect.height));
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.25);
+      const bw = Math.max(1, Math.floor(cssW * dpr));
+      const bh = Math.max(1, Math.floor(cssH * dpr));
+      if (canvas.width === bw && canvas.height === bh) return;
+      canvas.width = bw;
+      canvas.height = bh;
+      landKey = "";
+      schedule();
+    };
 
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const draw = () => {
+      if (hidden || !lctx) return;
+      const st = state.current;
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.25);
       const w = canvas.width / dpr;
       const h = canvas.height / dpr;
+      if (w < 2 || h < 2) return;
       const r = Math.min(w, h) * 0.42;
-
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, w, h);
-
-      const bg = token("--color-bg", "#09090b");
-      const surface = token("--color-surface", "#121418");
-      const fg = token("--color-fg", "#ecece8");
-      const muted = token("--color-muted", "#8b908c");
-      const accent = token("--color-accent", "#b8c4c0");
-      const signal = token("--color-signal", "#9eb8ae");
-      const alert = token("--color-alert", "#c4897a");
-      const watch = token("--color-watch", "#c4b08a");
-      const candidate = token("--color-candidate", "#3dff6a");
+      const {
+        bg,
+        surface,
+        fg,
+        muted,
+        accent,
+        signal,
+        alert,
+        watch,
+        candidate,
+      } = colors;
 
       projection
         .translate([w / 2, h / 2 + 4])
@@ -167,87 +198,78 @@ export function Globe({
         .rotate([st.rot[0], st.rot[1], 0])
         .clipAngle(90);
 
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(w / 2, h / 2 + 4, r, 0, Math.PI * 2);
-      const fill = ctx.createRadialGradient(
-        w / 2 - r * 0.25,
-        h / 2 - r * 0.15,
-        r * 0.1,
-        w / 2,
-        h / 2 + 4,
-        r,
-      );
-      fill.addColorStop(0, surface);
-      fill.addColorStop(1, bg);
-      ctx.fillStyle = fill;
-      ctx.fill();
-      ctx.restore();
-
-      ctx.save();
-      ctx.beginPath();
-      path(graticule);
-      ctx.strokeStyle = `${muted}33`;
-      ctx.lineWidth = 0.6;
-      ctx.stroke();
-      ctx.restore();
-
-      ctx.save();
-      ctx.beginPath();
-      path(land);
-      ctx.fillStyle = `${accent}18`;
-      ctx.fill();
-      ctx.strokeStyle = `${accent}55`;
-      ctx.lineWidth = 0.8;
-      ctx.stroke();
-      ctx.restore();
-
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(w / 2, h / 2 + 4, r, 0, Math.PI * 2);
-      ctx.strokeStyle = `${fg}22`;
-      ctx.lineWidth = 1.2;
-      ctx.stroke();
-      ctx.restore();
-
-      if (!st.reduced) {
-        ctx.save();
-        const scanRot = projection.rotate();
-        projection.rotate([st.scan, st.rot[1], 0]);
-        ctx.beginPath();
-        path({
-          type: "LineString",
-          coordinates: Array.from({ length: 37 }, (_, i) => [0, -90 + i * 5]),
-        });
-        ctx.strokeStyle = `${signal}55`;
-        ctx.lineWidth = 1.4;
-        ctx.stroke();
-        projection.rotate(scanRot);
-        ctx.restore();
+      const key = `${canvas.width}x${canvas.height}:${st.rot[0].toFixed(0)}:${st.rot[1].toFixed(0)}`;
+      if (key !== landKey) {
+        layer.width = canvas.width;
+        layer.height = canvas.height;
+        lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        lctx.clearRect(0, 0, w, h);
+        lctx.beginPath();
+        lctx.arc(w / 2, h / 2 + 4, r, 0, Math.PI * 2);
+        const fill = lctx.createRadialGradient(
+          w / 2 - r * 0.25,
+          h / 2 - r * 0.15,
+          r * 0.1,
+          w / 2,
+          h / 2 + 4,
+          r,
+        );
+        fill.addColorStop(0, surface);
+        fill.addColorStop(1, bg);
+        lctx.fillStyle = fill;
+        lctx.fill();
+        lctx.save();
+        lctx.beginPath();
+        path.context(lctx);
+        path(graticule);
+        lctx.strokeStyle = `${muted}33`;
+        lctx.lineWidth = 0.6;
+        lctx.stroke();
+        lctx.beginPath();
+        path(land);
+        lctx.fillStyle = `${accent}18`;
+        lctx.fill();
+        lctx.strokeStyle = `${accent}55`;
+        lctx.lineWidth = 0.8;
+        lctx.stroke();
+        lctx.restore();
+        lctx.beginPath();
+        lctx.arc(w / 2, h / 2 + 4, r, 0, Math.PI * 2);
+        lctx.strokeStyle = `${fg}22`;
+        lctx.lineWidth = 1.2;
+        lctx.stroke();
+        path.context(ctx);
+        landKey = key;
       }
 
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(layer, 0, 0, w, h);
+
       if (st.showTraffic) {
-        for (const a of st.aircraft) {
+        const traffic = st.aircraft.length > 60 ? st.aircraft.slice(0, 60) : st.aircraft;
+        ctx.fillStyle = `${muted}99`;
+        for (const a of traffic) {
           const p = visible(a.lng, a.lat, w, h, r);
           if (!p) continue;
           ctx.beginPath();
-          ctx.arc(p[0], p[1], 1.15, 0, Math.PI * 2);
-          ctx.fillStyle = `${muted}99`;
+          ctx.arc(p[0], p[1], 1.1, 0, Math.PI * 2);
           ctx.fill();
         }
       }
 
-      for (const b of st.balloons) {
+      ctx.strokeStyle = `${watch}aa`;
+      ctx.lineWidth = 1;
+      for (const b of st.balloons.slice(0, 40)) {
         const p = visible(b.lng, b.lat, w, h, r);
         if (!p) continue;
         ctx.beginPath();
         ctx.arc(p[0], p[1], 2.2, 0, Math.PI * 2);
-        ctx.strokeStyle = `${watch}aa`;
-        ctx.lineWidth = 1;
         ctx.stroke();
       }
 
-      for (const s of st.satellites) {
+      ctx.fillStyle = `${accent}cc`;
+      for (const s of st.satellites.slice(0, 40)) {
         const p = visible(s.lng, s.lat, w, h, r);
         if (!p) continue;
         ctx.save();
@@ -258,7 +280,6 @@ export function Globe({
         ctx.lineTo(0, 3.2);
         ctx.lineTo(-2.4, 0);
         ctx.closePath();
-        ctx.fillStyle = `${accent}cc`;
         ctx.fill();
         ctx.restore();
       }
@@ -278,17 +299,18 @@ export function Globe({
         }
       }
 
-      for (const cam of st.cameras) {
+      ctx.fillStyle = `${signal}cc`;
+      for (const cam of st.cameras.slice(0, 40)) {
         const p = visible(cam.lng, cam.lat, w, h, r);
         if (!p) continue;
         ctx.save();
         ctx.translate(p[0], p[1]);
         ctx.rotate(Math.PI / 4);
-        ctx.fillStyle = `${signal}cc`;
         ctx.fillRect(-2.2, -2.2, 4.4, 4.4);
         ctx.restore();
       }
 
+      const selected = st.contacts.find((c) => c.id === st.selectedId);
       if (selected && selected.headingDeg != null) {
         const inbound = (selected.headingDeg + 180) % 360;
         ctx.beginPath();
@@ -310,46 +332,60 @@ export function Globe({
       }
 
       ctx.font = "600 10px IBM Plex Mono, ui-monospace, monospace";
-      ctx.textBaseline = "bottom";
-
+      ctx.textBaseline = "middle";
       for (const s of st.contacts) {
         const p = visible(s.lng, s.lat, w, h, r);
         if (!p) continue;
+        const uap = isUapCandidate(s);
         const selectedDot = s.id === st.selectedId;
         const hover = s.id === st.hoverId;
-        const uap = isUapCandidate(s);
         const color = uap
           ? candidate
           : s.classification === "anomalous"
             ? alert
-            : s.classification === "sensor-contact"
-              ? signal
-              : s.classification === "unidentified"
-                ? watch
+            : s.classification === "unidentified"
+              ? watch
+              : s.live
+                ? signal
                 : muted;
         const rad = selectedDot ? 4.8 : hover ? 3.6 : s.live ? 3.1 : 2.4;
         ctx.beginPath();
         ctx.arc(p[0], p[1], rad, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
-        if (selectedDot || hover || s.live || uap) {
+        if (selectedDot || hover || uap) {
           ctx.beginPath();
-          ctx.arc(p[0], p[1], rad + (uap ? 7 : s.live && !selectedDot ? 5 : 6), 0, Math.PI * 2);
-          ctx.strokeStyle = `${color}${uap ? "cc" : s.live ? "66" : "99"}`;
+          ctx.arc(p[0], p[1], rad + (uap ? 7 : 6), 0, Math.PI * 2);
+          ctx.strokeStyle = `${color}${uap ? "cc" : "99"}`;
           ctx.lineWidth = uap ? 1.4 : 1;
           ctx.stroke();
         }
-        if (uap) {
-          const label = `${s.locationLabel.slice(0, 18)}  ${uapProbability(s)}%`;
+        if (uap && (selectedDot || hover)) {
           ctx.fillStyle = candidate;
-          ctx.fillText(label, p[0] + 8, p[1] - 6);
+          ctx.fillText(`${s.locationLabel.slice(0, 16)}  ${uapProbability(s)}%`, p[0] + 8, p[1] - 6);
         }
       }
-
-      raf = requestAnimationFrame(draw);
     };
 
-    raf = requestAnimationFrame(draw);
+    const schedule = () => {
+      if (hidden || raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        draw();
+        if (state.current.dragging && !hidden) schedule();
+      });
+    };
+    kick.current = schedule;
+
+    const onVis = () => {
+      hidden = document.visibilityState === "hidden";
+      if (!hidden) schedule();
+    };
+    document.addEventListener("visibilitychange", onVis);
+
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(wrap);
 
     const localXY = (e: PointerEvent) => {
       const rect = canvas.getBoundingClientRect();
@@ -372,10 +408,15 @@ export function Globe({
       state.current.dragging = true;
       state.current.moved = false;
       state.current.last = [e.clientX, e.clientY];
+      schedule();
     };
     const onMove = (e: PointerEvent) => {
       const xy = localXY(e);
-      state.current.hoverId = nearest(xy);
+      const hover = nearest(xy);
+      if (hover !== state.current.hoverId) {
+        state.current.hoverId = hover;
+        if (!state.current.dragging) schedule();
+      }
       canvas.style.cursor = state.current.pickMode
         ? "crosshair"
         : state.current.hoverId
@@ -394,15 +435,16 @@ export function Globe({
     const onUp = (e: PointerEvent) => {
       const wasDrag = state.current.moved;
       state.current.dragging = false;
+      schedule();
       if (wasDrag) return;
       const xy = localXY(e);
       if (state.current.pickMode) {
         const inv = projection.invert?.(xy);
-        if (inv) onPick(inv[1], inv[0]);
+        if (inv) pickRef.current(inv[1], inv[0]);
         return;
       }
       const id = nearest(xy);
-      if (id !== null) onSelect(id);
+      if (id !== null) selectRef.current(id);
     };
 
     canvas.addEventListener("pointerdown", onDown);
@@ -411,15 +453,17 @@ export function Globe({
     canvas.addEventListener("pointercancel", onUp);
 
     return () => {
+      kick.current = () => {};
       cancelAnimationFrame(raf);
       ro.disconnect();
       mq.removeEventListener("change", onMq);
+      document.removeEventListener("visibilitychange", onVis);
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointercancel", onUp);
     };
-  }, [onPick, onSelect]);
+  }, []);
 
   return (
     <div ref={wrapRef} className="relative h-full w-full min-h-[280px]">
@@ -431,7 +475,7 @@ export function Globe({
       <GlobeLegend />
     </div>
   );
-}
+});
 
 function GlobeLegend() {
   return (

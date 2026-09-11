@@ -28,6 +28,7 @@ export function OpticalPanel({ contact, hideHeader = false }: { contact: Contact
           locationLabel: contact!.locationLabel,
         },
       }),
+    staleTime: 18_000,
   });
   const [onlyFacing, setOnlyFacing] = useState(false);
   const [onlySky, setOnlySky] = useState(false);
@@ -90,7 +91,7 @@ export function OpticalPanel({ contact, hideHeader = false }: { contact: Contact
         </p>
       )}
 
-      {data.safety.length > 0 && (
+      {data.safety && data.safety.length > 0 && (
         <div className="rounded-xl border border-border bg-bg p-3">
           <p className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-muted">
             <Shield className="size-3" />
@@ -203,7 +204,7 @@ export function OpticalPanel({ contact, hideHeader = false }: { contact: Contact
               Showing {cams.length} of {data.cameraTotal} in range. Official public feeds only.
             </p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {cams.map((cam) => (
+              {cams.slice(0, 6).map((cam) => (
                 <CameraCard key={cam.id} cam={cam} />
               ))}
             </div>
@@ -271,10 +272,12 @@ export function OpticalPanel({ contact, hideHeader = false }: { contact: Contact
 }
 
 function CameraCard({ cam }: { cam: CameraHit }) {
+  const [want, setWant] = useState(false);
   const frame = useQuery({
     queryKey: ["frame", cam.id],
     queryFn: () => getCameraFrame({ data: { id: cam.id } }),
-    staleTime: 20_000,
+    enabled: want,
+    staleTime: 60_000,
   });
   const src =
     frame.data && frame.data.ok ? `data:${frame.data.mime};base64,${frame.data.b64}` : null;
@@ -285,10 +288,14 @@ function CameraCard({ cam }: { cam: CameraHit }) {
         {src ? (
           <img src={src} alt={cam.name} className="size-full object-cover" />
         ) : (
-          <div className="flex size-full items-center justify-center gap-2 text-xs text-muted">
+          <button
+            type="button"
+            onClick={() => setWant(true)}
+            className="flex size-full items-center justify-center gap-2 text-xs text-muted"
+          >
             <Camera className="size-3.5" />
-            {frame.isLoading ? "Acquiring frame…" : "Frame unavailable"}
-          </div>
+            {frame.isFetching ? "Acquiring frame…" : "Load frame"}
+          </button>
         )}
       </div>
       <figcaption className="space-y-1 p-2.5">
@@ -333,9 +340,9 @@ export function LiveOpticsStrip({
   onOpen: (id: number) => void;
 }) {
   const tiles = tracks.flatMap((t) => {
-    const cams = [...t.cameras.slice(0, 2), ...t.satelliteViews.slice(0, 1)];
+    const cams = [...t.cameras.slice(0, 1), ...t.satelliteViews.slice(0, 1)];
     return cams.map((cam) => ({ cam, track: t }));
-  });
+  }).slice(0, 6);
   return (
     <div className="border-b border-border bg-surface">
       <div className="flex items-center justify-between gap-2 px-3 pt-2 sm:px-4">
@@ -359,46 +366,16 @@ export function LiveOpticsStrip({
             key={`${track.contactId}:${cam.id}`}
             type="button"
             onClick={() => onOpen(track.contactId)}
-            className="w-[168px] shrink-0 overflow-hidden rounded-lg border border-border bg-raised text-left"
+            className="w-[168px] shrink-0 overflow-hidden rounded-lg border border-border bg-raised px-2.5 py-2 text-left"
           >
-            <LiveFrameThumb cam={cam} />
-            <span className="block space-y-0.5 p-2">
-              <span className="block truncate text-xs font-medium leading-snug text-fg">{cam.name}</span>
-              <span className="block truncate font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
-                {track.label} · {kmLabel(cam.distanceKm)}
-                {cam.spectrum === "infrared" ? " · IR" : cam.facing ? " · facing" : ""}
-              </span>
+            <span className="block truncate text-xs font-medium leading-snug text-fg">{cam.name}</span>
+            <span className="mt-0.5 block truncate font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
+              {track.label} · {kmLabel(cam.distanceKm)}
+              {cam.spectrum === "infrared" ? " · IR" : cam.facing ? " · facing" : ""}
             </span>
           </button>
         ))}
       </div>
     </div>
-  );
-}
-
-function LiveFrameThumb({ cam }: { cam: CameraHit }) {
-  const frame = useQuery({
-    queryKey: ["frame", cam.id],
-    queryFn: () => getCameraFrame({ data: { id: cam.id } }),
-    staleTime: 18_000,
-    refetchInterval: 36_000,
-  });
-  const src = frame.data && frame.data.ok ? `data:${frame.data.mime};base64,${frame.data.b64}` : null;
-  return (
-    <span className="relative block aspect-video bg-bg">
-      {src ? (
-        <img src={src} alt="" className="size-full object-cover" />
-      ) : (
-        <span className="flex size-full items-center justify-center gap-1.5 text-[10px] uppercase tracking-[0.12em] text-muted">
-          <Camera className="size-3" />
-          {frame.isLoading ? "Frame" : "No frame"}
-        </span>
-      )}
-      {cam.spectrum === "infrared" && (
-        <span className="absolute right-1 top-1 rounded-full border border-border bg-bg/80 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-watch">
-          IR
-        </span>
-      )}
-    </span>
   );
 }

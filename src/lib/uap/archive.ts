@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getSql } from "@/lib/db";
 import { hashId } from "./geo";
-import { mapSighting, type ReviewStatus, type Sighting, type SightingRow } from "./types";
+import { mapSighting, type Contact, type ReviewStatus, type Sighting, type SightingRow } from "./types";
 
 export function sealHash(c: { lat: number; lng: number; occurredAt: string; summary: string }) {
   const raw = `${c.lat.toFixed(4)}|${c.lng.toFixed(4)}|${c.occurredAt}|${c.summary.slice(0, 240)}`;
@@ -289,3 +289,97 @@ export const sealServerBackup = createServerFn({ method: "POST" }).handler(async
   await logLedger(null, "server-backup", "server", `${snap.count} records sealed — no deletions`, hash);
   return { hash, count: snap.count, at: snap.at };
 });
+
+export function liveIdentityHash(c: Pick<Contact, "lat" | "lng" | "occurredAt" | "summary" | "source" | "locationLabel" | "url">) {
+  if (c.url) {
+    return sealHash({ lat: 0, lng: 0, occurredAt: "url", summary: c.url.slice(0, 240) });
+  }
+  if (c.source === "adsb") {
+    return sealHash({
+      lat: Number(c.lat.toFixed(1)),
+      lng: Number(c.lng.toFixed(1)),
+      occurredAt: c.locationLabel,
+      summary: `adsb:${c.locationLabel}`,
+    });
+  }
+  return sealHash({
+    lat: Number(c.lat.toFixed(2)),
+    lng: Number(c.lng.toFixed(2)),
+    occurredAt: (c.occurredAt || "").slice(0, 10),
+    summary: (c.summary || "").slice(0, 240),
+  });
+}
+
+export async function sealLiveContacts(list: Contact[]) {
+  await ensureArchiveSchema();
+  const sql = await getSql();
+  let inserted = 0;
+  let skipped = 0;
+  for (const c of list.slice(0, 40)) {
+    const residual = c.residual ?? c.confidence;
+    if (c.source !== "fireball" && c.source !== "social" && residual < 28) {
+      skipped += 1;
+      continue;
+    }
+    const hash = liveIdentityHash(c);
+    const dup = await sql<{ id: number }>`select id from sightings where content_hash = ${hash} limit 1`;
+    if (dup[0]) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      const rows = await sql<{ id: number }>`
+        insert into sightings (
+          lat, lng, location_label, region, occurred_at, shape,
+          duration_sec, summary, classification, confidence, source,
+          review_status, content_hash
+        ) values (
+          ${c.lat}, ${c.lng}, ${c.locationLabel.slice(0, 80)}, ${c.region.slice(0, 40)},
+          ${c.occurredAt}::timestamptz, ${c.shape}, ${c.durationSec}, ${c.summary.slice(0, 800)},
+          ${c.classification}, ${Math.round(residual)}, ${c.source},
+          ${"pending"}, ${hash}
+        )
+        returning id
+      `;
+      if (rows[0]) {
+        inserted += 1;
+        await logLedger(rows[0].id, "duty-seal", "duty", "auto ingest — no deletions", hash);
+      }
+    } catch {
+      skipped += 1;
+    }
+  }
+  return { inserted, skipped };
+}
+
+export async function writeServerBackup() {
+  await ensureArchiveSchema();
+  const sql = await getSql();
+  const rows = await sql<SightingRow>`
+    select
+      id, lat, lng, location_label, region,
+      occurred_at::text as occurred_at,
+      shape, duration_sec, summary, classification, confidence, source,
+      created_at::text as created_at,
+      review_status, content_hash
+    from sightings
+    order by occurred_at desc
+    limit 120
+  `;
+  const at = new Date().toISOString();
+  const hash = sealHash({ lat: 0, lng: 0, occurredAt: at, summary: `backup:${rows.length}` });
+  const payload = JSON.stringify({
+    at,
+    count: rows.length,
+    records: rows.map((r) => {
+      const s = mapSighting(r);
+      return { ...s, contentHash: s.contentHash || sealHash(s) };
+    }),
+  });
+  await sql`
+    insert into archive_snapshots (snapshot_hash, contact_count, payload)
+    values (${hash}, ${rows.length}, ${payload}::jsonb)
+  `;
+  await logLedger(null, "server-backup", "duty", `${rows.length} records sealed — no deletions`, hash);
+  return { hash, count: rows.length, at };
+}

@@ -46,6 +46,29 @@ export async function fetchJson<T>(
   }
 }
 
+export async function fetchText(
+  url: string,
+  opts: { timeoutMs?: number; headers?: Record<string, string> } = {},
+): Promise<string> {
+  const timeoutMs = opts.timeoutMs ?? 8000;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: {
+        Accept: "application/rss+xml, application/xml, text/xml, application/json, */*;q=0.5",
+        "User-Agent": "AETHER-UAP-Tracker/1.0 (research)",
+        ...opts.headers,
+      },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.text();
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 export async function fetchBuf(
   url: string,
   opts: { timeoutMs?: number; maxBytes?: number } = {},

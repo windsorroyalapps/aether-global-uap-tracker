@@ -176,16 +176,16 @@ Ground cameras in LOS: ${optics.total}`;
 
 export async function sweepContacts(items: Compact[]): Promise<LiveVerdict[]> {
   const ranked = [...items]
-    .filter((c) => (c.residual ?? 0) >= 28 || c.classification === "anomalous")
+    .filter((c) => (c.residual ?? 0) >= 18 || c.classification === "anomalous")
     .sort((a, b) => (b.residual ?? 0) - (a.residual ?? 0))
     .slice(0, 8);
 
   const stale = ranked.filter((c) => {
     const v = peekVerdict(c.id);
-    return !v || Date.now() - Date.parse(v.at) > 8 * 60_000;
+    return !v || Date.now() - Date.parse(v.at) > 6 * 60_000;
   });
 
-  const batch = stale.slice(0, 2);
+  const batch = stale.slice(0, 3);
   await Promise.all(batch.map((c) => scoreOne(c).catch(() => null)));
 
   return ranked.map((c) => peekVerdict(c.id)).filter((v): v is LiveVerdict => v !== null);

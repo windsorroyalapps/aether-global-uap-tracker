@@ -258,3 +258,59 @@ export const aiReviewReport = createServerFn({ method: "POST" })
     await logLedger(s.id, "ai-reviewed", votes.filter((v) => v.ok).map((v) => v.provider).join("+"), fused.assessment.slice(0, 400), s.contentHash ?? null);
     return fused;
   });
+
+export const dutyReviewPending = createServerFn({ method: "POST" }).handler(async () => {
+  const sql = await getSql();
+  await ensureArchiveSchema();
+  const pending = await sql<{ id: number }>`
+    select id from sightings
+    where review_status in ('pending', 'held')
+    order by id asc
+    limit 1
+  `;
+  const countRows = await sql<{ n: number }>`
+    select count(*)::int as n from sightings where review_status in ('pending', 'held')
+  `;
+  const remaining = countRows[0]?.n ?? 0;
+  const id = pending[0]?.id;
+  if (id == null) return { reviewed: null as number | null, remaining, error: null as string | null };
+  const rows = await sql<SightingRow>`
+    select
+      id, lat, lng, location_label, region,
+      occurred_at::text as occurred_at,
+      shape, duration_sec, summary, classification, confidence, source,
+      created_at::text as created_at,
+      review_status, content_hash
+    from sightings where id = ${id} limit 1
+  `;
+  const row = rows[0];
+  if (!row) return { reviewed: null, remaining, error: "missing" };
+  const s = mapSighting(row);
+  const extra = detectionNotes(s as Contact).join("; ");
+  const user = promptFor({
+    locationLabel: s.locationLabel,
+    lat: s.lat,
+    lng: s.lng,
+    region: s.region,
+    summary: s.summary,
+    source: s.source,
+    classification: s.classification,
+    extra,
+  });
+  const votes = await runKeys({}, user);
+  if (!votes.some((v) => v.ok)) return { reviewed: null, remaining, error: "AI review failed" };
+  const fused = fuse(votes);
+  await sql`
+    update sightings set review_status = 'ai-reviewed' where id = ${s.id} and review_status in ('pending', 'held')
+  `;
+  await sql`
+    insert into analyses (sighting_id, assessment, likely_origin, threat)
+    values (${s.id}, ${fused.assessment}, ${fused.likelyOrigin}, ${fused.threat})
+    on conflict (sighting_id) do update set
+      assessment = excluded.assessment,
+      likely_origin = excluded.likely_origin,
+      threat = excluded.threat
+  `;
+  await logLedger(s.id, "ai-reviewed", "duty+grok", fused.assessment.slice(0, 400), s.contentHash ?? null);
+  return { reviewed: s.id, remaining: Math.max(0, remaining - 1), error: null as string | null, label: s.locationLabel };
+});

@@ -55,7 +55,7 @@ export function scoreAnomaly(a: Aircraft): { score: number; reasons: string[] } 
   if (onAirportApproach(a) && a.squawk !== "7700" && Math.abs(a.baroRate ?? 0) < 8000) {
     return null;
   }
-  if (score < 32) return null;
+  if (score < 24) return null;
   return { score: Math.min(96, score), reasons };
 }
 

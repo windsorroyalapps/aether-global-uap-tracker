@@ -117,8 +117,8 @@ export async function buildLivePicture(): Promise<LivePicture> {
   return {
     fetchedAt: new Date().toISOString(),
     detections,
-    aircraft: adsb.aircraft.filter((a) => (a.altFt ?? 0) > 200).slice(0, 420),
-    balloons: balloons.filter((b) => b.altM > 8000).slice(0, 80),
+    aircraft: adsb.aircraft.filter((a) => (a.altFt ?? 0) > 200).slice(0, 120),
+    balloons: balloons.filter((b) => b.altM > 8000).slice(0, 40),
     satellites,
     iss,
     spaceWeather: sw,

@@ -1,5 +1,5 @@
-import { cached, fetchJson } from "./cache";
-import { geoparse } from "./cities";
+import { cached, fetchJson, fetchText } from "./cache";
+import { locateNews } from "./cities";
 import { haversineKm, hashId, regionOf } from "./geo";
 import type { Aircraft, Contact, SolarFlare, SpaceWeather, StreamHealth, WeatherSnap } from "./types";
 
@@ -228,9 +228,15 @@ export async function fetchWeather(lat: number, lng: number): Promise<WeatherSna
 
 type GdeltArt = { url?: string; title?: string; seendate?: string; sourcecountry?: string };
 
-function newsContact(key: string, title: string, url: string | null, when: string, stream: string): Contact | null {
-  const geo = geoparse(title);
-  if (!geo) return null;
+function newsContact(
+  key: string,
+  title: string,
+  url: string | null,
+  when: string,
+  stream: string,
+  country?: string | null,
+): Contact {
+  const geo = locateNews(title, country);
   return {
     id: hashId(key),
     lat: geo.lat,
@@ -240,24 +246,60 @@ function newsContact(key: string, title: string, url: string | null, when: strin
     occurredAt: when,
     shape: "unknown",
     durationSec: null,
-    summary: title,
+    summary: title.slice(0, 800),
     classification: "unidentified",
     confidence: 34,
     source: "social",
     createdAt: new Date().toISOString(),
     live: true,
     stream,
-    residual: 50,
+    residual: 42,
     reasons: ["open-source media"],
     url,
   };
 }
 
+function decodeXml(s: string) {
+  return s
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&/g, "&")
+    .replace(/</g, "<")
+    .replace(/>/g, ">")
+    .replace(/"/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/'/g, "'")
+    .trim();
+}
+
+function parseRssItems(xml: string): { title: string; link: string; when: string }[] {
+  const out: { title: string; link: string; when: string }[] = [];
+  const blocks = xml.match(/<item\b[\s\S]*?<\/item>/gi) ?? [];
+  for (const block of blocks.slice(0, 24)) {
+    const title = decodeXml((block.match(/<title[^>]*>([\s\S]*?)<\/title>/i) ?? [])[1] ?? "");
+    const link = decodeXml((block.match(/<link[^>]*>([\s\S]*?)<\/link>/i) ?? [])[1] ?? "");
+    const pub = decodeXml((block.match(/<pubDate[^>]*>([\s\S]*?)<\/pubDate>/i) ?? [])[1] ?? "");
+    if (!title) continue;
+    const when = pub && !Number.isNaN(Date.parse(pub)) ? new Date(pub).toISOString() : new Date().toISOString();
+    out.push({ title, link, when });
+  }
+  return out;
+}
+
+async function fetchGoogleNews(): Promise<Contact[]> {
+  const xml = await fetchText(
+    "https://news.google.com/rss/search?q=UAP+OR+UFO+OR+%22unidentified+aerial%22+OR+%22unidentified+anomalous%22&hl=en-US&gl=US&ceid=US:en",
+    { timeoutMs: 9000 },
+  );
+  return parseRssItems(xml).map((item) =>
+    newsContact(`gnews:${item.link || item.title}`, item.title, item.link || null, item.when, "Google News"),
+  );
+}
+
 async function fetchGdelt(): Promise<Contact[]> {
-  const q = encodeURIComponent('(UFO OR UAP OR "unidentified aerial" OR "unidentified anomalous")');
+  const q = encodeURIComponent('(UFO OR UAP OR "unidentified aerial")');
   const j = await fetchJson<{ articles?: GdeltArt[] }>(
-    `https://api.gdeltproject.org/api/v2/doc/doc?query=${q}&mode=ArtList&maxrecords=20&sort=datedesc&format=json`,
-    { timeoutMs: 8000 },
+    `https://api.gdeltproject.org/api/v2/doc/doc?query=${q}&mode=ArtList&maxrecords=12&sort=datedesc&format=json&timespan=3d`,
+    { timeoutMs: 6000 },
   );
   const out: Contact[] = [];
   for (const a of j.articles ?? []) {
@@ -265,38 +307,44 @@ async function fetchGdelt(): Promise<Contact[]> {
     const when = a.seendate
       ? `${a.seendate.slice(0, 4)}-${a.seendate.slice(4, 6)}-${a.seendate.slice(6, 8)}T${a.seendate.slice(8, 10) || "00"}:${a.seendate.slice(10, 12) || "00"}:00Z`
       : new Date().toISOString();
-    const c = newsContact(`gdelt:${a.url ?? a.title}`, a.title, a.url ?? null, when, "Open news (GDELT)");
-    if (c) out.push(c);
+    out.push(
+      newsContact(`gdelt:${a.url ?? a.title}`, a.title, a.url ?? null, when, "Open news (GDELT)", a.sourcecountry),
+    );
   }
   return out;
 }
 
 async function fetchHn(): Promise<Contact[]> {
-  const j = await fetchJson<{ hits?: { title?: string; url?: string; objectID?: string; created_at?: string }[] }>(
-    "https://hn.algolia.com/api/v1/search?query=UAP%20OR%20UFO%20OR%20%22unidentified%20aerial%22&hitsPerPage=16",
-    { timeoutMs: 7000 },
-  );
+  const j = await fetchJson<{
+    hits?: { title?: string; story_title?: string; url?: string; objectID?: string; created_at?: string }[];
+  }>("https://hn.algolia.com/api/v1/search_by_date?query=UFO%20UAP&tags=story&hitsPerPage=16", { timeoutMs: 7000 });
   const out: Contact[] = [];
   for (const h of j.hits ?? []) {
-    if (!h.title) continue;
+    const title = h.title || h.story_title;
+    if (!title) continue;
     const when = h.created_at ?? new Date().toISOString();
-    const c = newsContact(
-      `hn:${h.objectID ?? h.title}`,
-      h.title,
-      h.url ?? `https://news.ycombinator.com/item?id=${h.objectID}`,
-      when,
-      "Hacker News",
+    out.push(
+      newsContact(
+        `hn:${h.objectID ?? title}`,
+        title,
+        h.url ?? `https://news.ycombinator.com/item?id=${h.objectID}`,
+        when,
+        "Hacker News",
+      ),
     );
-    if (c) out.push(c);
   }
   return out;
 }
 
 export async function fetchSocial(): Promise<Contact[]> {
-  return cached("news-uap", 8 * 60_000, async () => {
-    const [g, h] = await Promise.all([fetchGdelt().catch(() => [] as Contact[]), fetchHn().catch(() => [] as Contact[])]);
+  return cached("news-uap", 6 * 60_000, async () => {
+    const [gnews, hn, gdelt] = await Promise.all([
+      fetchGoogleNews().catch(() => [] as Contact[]),
+      fetchHn().catch(() => [] as Contact[]),
+      fetchGdelt().catch(() => [] as Contact[]),
+    ]);
     const map = new Map<number, Contact>();
-    for (const c of [...g, ...h]) map.set(c.id, c);
+    for (const c of [...gnews, ...hn, ...gdelt]) map.set(c.id, c);
     return [...map.values()];
   }).catch(() => [] as Contact[]);
 }

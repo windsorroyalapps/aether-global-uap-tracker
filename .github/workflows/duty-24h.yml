@@ -1,0 +1,26 @@
+name: Duty 24/7
+
+on:
+  schedule:
+    - cron: "*/20 * * * *"
+  workflow_dispatch:
+
+jobs:
+  pulse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Seal live archive
+        env:
+          DUTY_URL: ${{ vars.AETHER_DUTY_URL || vars.AETHER_APP_URL || 'https://aether-global-uap-tracker.vercel.app' }}
+          DUTY_SECRET: ${{ secrets.DUTY_SECRET || secrets.CRON_SECRET }}
+        run: |
+          set -eu
+          url="${DUTY_URL%/}/api/duty"
+          echo "Duty pulse $url"
+          if [ -n "${DUTY_SECRET:-}" ]; then
+            curl -fsS -m 50 -H "Authorization: Bearer $DUTY_SECRET" "$url"
+          else
+            curl -fsS -m 50 "$url"
+          fi
+          echo

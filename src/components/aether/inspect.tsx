@@ -340,7 +340,7 @@ function AutoReport({ contact }: { contact: Contact }) {
     run.mutate();
     // Fire once per selected contact unless live AI already scored it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contact.id, liveHit]);
+  }, [contact.id, liveHit?.verdict, liveHit?.at]);
 
   const result = liveHit
     ? {
