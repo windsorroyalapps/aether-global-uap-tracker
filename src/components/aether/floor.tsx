@@ -308,7 +308,7 @@ export function FloorPanel() {
           <article key={s.id} className="space-y-2 rounded-lg border border-border p-2.5">
             <div className="flex items-start justify-between gap-2">
               <p className="text-sm font-medium">{s.locationLabel}</p>
-              <Badge variant={s.reviewStatus === "held" ? "watch" : "default">{s.reviewStatus}</Badge>
+              <Badge variant={s.reviewStatus === "held" ? "watch" : "default"}>{s.reviewStatus}</Badge>
             </div>
             <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
               {formatWhen(s.occurredAt)} · {s.region}
