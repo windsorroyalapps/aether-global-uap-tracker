@@ -14,13 +14,14 @@ import {
 } from "@/components/aether/console-rails";
 import { BriefingPanel, ReportForm } from "@/components/aether/console-rails-more";
 import { LiveOpticsStrip } from "@/components/aether/optics";
+import { NotifyToggle } from "@/components/aether/notify-toggle";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getLivePicture, getWatchContext, liveOpticsForTracks, sweepLiveSensors } from "@/lib/uap/live";
 import { compactContact } from "@/lib/uap/live-sensor";
 import { listSightings } from "@/lib/uap/queries";
 import { listQueue } from "@/lib/uap/archive";
-import { classifyAlert, pageNative, shouldPage, armNativePush, tabHidden } from "@/lib/uap/alerts";
+import { classifyAlert, pageNative, shouldPage, tabHidden } from "@/lib/uap/alerts";
 import { dutyReviewPending } from "@/lib/uap/ensemble";
 import { asContact } from "@/lib/uap/types";
 import type { Classification, Contact, LiveVerdict, Sighting, Source } from "@/lib/uap/types";
@@ -139,10 +140,6 @@ export function Console({ initial }: { initial: Sighting[] }) {
     retry: 0,
     staleTime: 30_000,
   });
-
-  useEffect(() => {
-    void armNativePush();
-  }, []);
 
   const alerts = useMemo(
     () => contacts.filter((c) => c.live).map(classifyAlert),
@@ -284,6 +281,7 @@ export function Console({ initial }: { initial: Sighting[] }) {
         )}
         <Badge variant="live">Duty 24/7</Badge>
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <NotifyToggle />
           <Button
             variant={showTraffic ? "default" : "secondary"}
             size="sm"
