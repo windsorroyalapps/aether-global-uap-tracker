@@ -2,6 +2,47 @@
 
 Live-fusion console for tracking unidentified anomalous phenomena. AETHER correlates public sensor streams, scores residuals against prosaic correlators, pulls nearby public cameras that could have a line of sight on an event, and runs live AI on optical + infrared frames as contacts appear.
 
+**Live:** https://aether-global-uap-tracker.vercel.app
+
+## 24/7 duty + Web Push alerts
+
+The console stays hot around the clock:
+
+- **Vercel Cron** (`vercel.json`) hits `/api/duty` every 20 minutes (`*/20 * * * *`). On Hobby plans Vercel may only honor hourly crons — if so, keep the GitHub Action as primary.
+- **GitHub Actions** (`.github/workflows/duty-24h.yml`) also curls `/api/duty` every 20 minutes (primary backup / Hobby-safe).
+- Duty seals live contacts, writes a server backup, then fans out **Web Push** for `candidate` / `elevated` residuals (8-minute cooldown, escalation, or residual jump ≥10).
+
+### Opt-in alerts (phone / PWA)
+
+1. Open the console and tap **Enable alerts** in the header (permission is never requested on mount).
+2. Grant notification permission when prompted.
+3. Keep the subscription; alerts arrive even when the app/tab is closed (service worker `push` handler).
+
+**iOS:** Add to Home Screen for reliable Web Push on iOS 16.4+. Safari alone may not deliver closed-app push.
+
+Local flag: `localStorage.aether-push-on`.
+
+### Environment (Vercel / host)
+
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | Neon Postgres |
+| `XAI_API_KEY` | Grok live AI |
+| `DUTY_SECRET` / `CRON_SECRET` | Auth for `/api/duty` |
+| `VAPID_PUBLIC_KEY` | Web Push public key |
+| `VAPID_PRIVATE_KEY` | Web Push private key |
+| `VAPID_SUBJECT` | `mailto:` or `https://` contact (default `mailto:alerts@aether.local`) |
+
+Generate VAPID keys:
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+Set both keys + subject in the Vercel project env, then redeploy. Without VAPID, duty still seals the archive but push fanout is a no-op.
+
+After merge, run `npm install` locally / on deploy so `package-lock.json` picks up `web-push` (^3.6.7).
+
 ## Live streams
 
 - **ADS-B** — anomaly scoring on live aircraft (slow high, extreme climb, emergency squawk)
@@ -24,6 +65,7 @@ Cameras are ranked by line-of-sight: distance, facing azimuth, elevation through
 - Correlator stack (balloons / satellites / sky bodies / flares)
 - Residual scoring that prefers prosaic explanations
 - Grok assessment + watch-floor briefing
+- **Enable alerts** for closed-app Web Push on candidate/elevated contacts
 
 ## Native apps (iOS / Android / Windows)
 
@@ -46,6 +88,7 @@ Set repository variable `AETHER_APP_URL` to your live console URL (default `http
 - Postgres (Neon in production, PGLite in local preview)
 - xAI Grok for analysis (`grok-4.5`)
 - `astronomy-engine` for celestial positions
+- `web-push` for VAPID Web Push fanout
 
 ## Local
 
@@ -54,10 +97,12 @@ npm install
 npm run dev
 ```
 
-AI features require `XAI_API_KEY`. Tracker, globe, cameras, and fusion streams work without it.
+AI features require `XAI_API_KEY`. Tracker, globe, cameras, and fusion streams work without it. Web Push fanout also needs the VAPID env vars above.
 
 ## Data
 
 Contacts are stored in `sightings`. Seeded archive cases are public-record reports and sensor notes, classified conservatively. Field reports must not include names, emails, or private addresses.
+
+Push endpoints live in `push_subscriptions`; duty cooldown keys in `push_alert_log` (see `migrations/0004_push_subscriptions.sql`).
 
 Only official public camera and telemetry APIs are used. Snapshot proxying is SSRF-restricted to an allowlisted host set.
