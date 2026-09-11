@@ -146,3 +146,130 @@ export function Stat({ label, value }: { label: string; value: string | number }
     </div>
   );
 }
+
+export function Feed({
+  filtered,
+  query,
+  setQuery,
+  klass,
+  setKlass,
+  source,
+  setSource,
+  epoch,
+  setEpoch,
+  selected,
+  onSelect,
+  onOpenOptics,
+}: {
+  filtered: Contact[];
+  query: string;
+  setQuery: (v: string) => void;
+  klass: Classification | "all";
+  setKlass: (v: Classification | "all") => void;
+  source: Source | "all";
+  setSource: (v: Source | "all") => void;
+  epoch: "all" | "live" | "archive";
+  setEpoch: (v: "all" | "live" | "archive") => void;
+  selected: Contact | null;
+  onSelect: (id: number) => void;
+  onOpenOptics: () => void;
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="space-y-3 p-3">
+        <div className="relative">
+          <Filter className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-subtle" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search region, shape, stream"
+            className="pl-9"
+          />
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {(["all", "live", "archive"] as const).map((e) => (
+            <Chip key={e} active={epoch === e} onClick={() => setEpoch(e)}>
+              {e === "all" ? "All epochs" : e === "live" ? "Live" : "Archive"}
+            </Chip>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <Chip active={klass === "all"} onClick={() => setKlass("all")}>
+            All classes
+          </Chip>
+          {CLASSIFICATIONS.map((c) => (
+            <Chip key={c} active={klass === c} onClick={() => setKlass(c)}>
+              {classLabel(c)}
+            </Chip>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <Chip active={source === "all"} onClick={() => setSource("all")}>
+            All streams
+          </Chip>
+          {SOURCES.filter((s) => s !== "optical").map((s) => (
+            <Chip key={s} active={source === s} onClick={() => setSource(s)}>
+              {sourceLabel(s)}
+            </Chip>
+          ))}
+        </div>
+      </div>
+      <Separator />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {filtered.length === 0 ? (
+          <p className="px-4 py-8 text-sm text-muted">No contacts match this filter.</p>
+        ) : (
+          filtered.slice(0, 80).map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => onSelect(s.id)}
+              className={cn(
+                "flex w-full flex-col gap-1 border-b border-border px-4 py-3 text-left transition-colors duration-150",
+                selected?.id === s.id ? "bg-raised" : "hover:bg-raised/60",
+              )}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className={cn("truncate text-sm font-medium", isUapCandidate(s) && "text-candidate")}>
+                  {s.locationLabel}
+                </span>
+                {isUapCandidate(s) ? (
+                  <Badge variant="candidate">{uapProbability(s)}% UAP</Badge>
+                ) : (
+                  <Badge variant={classTone(s.classification)}>{classLabel(s.classification)}</Badge>
+                )}
+              </div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
+                {s.live ? "Live" : "File"} · {sourceLabel(s.source)} · {s.region} · {formatWhen(s.occurredAt)}
+              </p>
+            </button>
+          ))
+        )}
+      </div>
+      {selected && <Detail key={selected.id} contact={selected} onOpenOptics={onOpenOptics} />}
+    </div>
+  );
+}
+
+export function Chip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "h-8 rounded-full border px-3 font-mono text-[10px] uppercase tracking-[0.12em] transition-colors duration-150",
+        active ? "border-accent/40 bg-raised text-fg" : "border-border text-muted hover:text-fg",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
