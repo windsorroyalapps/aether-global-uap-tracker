@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useState, useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Activity, Globe2, MapPin, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
