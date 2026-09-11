@@ -25,6 +25,35 @@ Cameras are ranked by line-of-sight: distance, facing azimuth, elevation through
 - Residual scoring that prefers prosaic explanations
 - Grok assessment + watch-floor briefing
 
+## Live push (24/7 phone alerts)
+
+Opt-in Web Push reaches phones even when the console tab is closed. Duty cycles (`duty-24h.yml` every 20 min + Vercel hourly `/api/duty`) classify live detections and broadcast **candidate** / **elevated** alerts (8-minute cooldown) to stored subscriptions.
+
+### Vercel / env
+
+Set these on the Vercel project (Production + Preview). **Never commit the private key into TypeScript source** — README / deploy UI only.
+
+```bash
+VAPID_PUBLIC_KEY=BBt-qrOuPV6oDiZCBpVOD5Wbk4lqyaDkmSDxdR_sk-og2lh2I_uJaY8oYqHVMTCFBx4LWFO3KvCe0Cdz234yiA8
+VAPID_PRIVATE_KEY=n-ypH1FHKSSdW9oErdtLUxCZd9SDozCabPOnPcAlMKs
+VAPID_SUBJECT=mailto:windsorroyalapps@users.noreply.github.com
+```
+
+Optional: `AETHER_APP_URL=https://aether-global-uap-tracker.vercel.app` so notification taps open the live console.
+
+After deploy, open the console → header **Alerts** bell → allow notifications. That registers `/aether-sw.js`, creates a PushManager subscription with the public VAPID key, and saves the endpoint to Postgres (`push_subscriptions`). Toggle again to unsubscribe.
+
+### iPhone / iPad (Safari)
+
+Safari only delivers Web Push for **Home Screen web apps** (iOS 16.4+):
+
+1. Open `https://aether-global-uap-tracker.vercel.app` in Safari (not an in-app browser).
+2. Share → **Add to Home Screen** → open the icon (standalone).
+3. Tap **Alerts** in the header and allow notifications when prompted.
+4. Keep the Home Screen app installed; pushes arrive while it is backgrounded or closed.
+
+Chrome / Edge / Firefox on Android and desktop can opt in from the live site without installing.
+
 ## Native apps (iOS / Android / Windows)
 
 A GitHub Actions workflow at `.github/workflows/native-packages.yml` builds:
@@ -46,6 +75,7 @@ Set repository variable `AETHER_APP_URL` to your live console URL (default `http
 - Postgres (Neon in production, PGLite in local preview)
 - xAI Grok for analysis (`grok-4.5`)
 - `astronomy-engine` for celestial positions
+- `web-push` + VAPID for opt-in 24/7 phone alerts
 
 ## Local
 
@@ -54,7 +84,7 @@ npm install
 npm run dev
 ```
 
-AI features require `XAI_API_KEY`. Tracker, globe, cameras, and fusion streams work without it.
+AI features require `XAI_API_KEY`. Tracker, globe, cameras, and fusion streams work without it. Web Push broadcast is a no-op until the three `VAPID_*` vars above are set.
 
 ## Data
 
