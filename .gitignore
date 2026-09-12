@@ -16,3 +16,5 @@ artifacts
 .grok/*.html
 .grok/og-pending
 AGENTS.md
+.project_id
+

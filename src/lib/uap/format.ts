@@ -1,4 +1,5 @@
 import type { Classification, Sighting } from "./types";
+import { SENSOR_META, type SensorType } from "./sensors";
 
 export function formatWhen(iso: string) {
   const d = new Date(iso);
@@ -40,6 +41,20 @@ export function classTone(c: Classification): "default" | "live" | "watch" | "al
   if (c === "sensor-contact") return "live";
   if (c === "unidentified") return "watch";
   return "default";
+}
+
+export function uapTone(n: number): "default" | "live" | "watch" | "alert" {
+  if (n >= 70) return "alert";
+  if (n >= 45) return "watch";
+  return "default";
+}
+
+export function sensorLabel(t: SensorType) {
+  return SENSOR_META[t].label;
+}
+
+export function sensorShort(t: SensorType) {
+  return SENSOR_META[t].short;
 }
 
 export function coords(s: Pick<Sighting, "lat" | "lng">) {

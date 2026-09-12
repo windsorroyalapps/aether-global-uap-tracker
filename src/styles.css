@@ -110,3 +110,42 @@
     opacity: 0.45;
   }
 }
+
+.feed-scan {
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0 2px,
+    color-mix(in oklab, var(--color-fg) 6%, transparent) 2px 3px
+  );
+  mix-blend-mode: overlay;
+}
+
+.spectrum-visible {
+  filter: none;
+}
+.spectrum-ir {
+  filter: grayscale(1) contrast(1.35) brightness(1.08);
+}
+.spectrum-thermal {
+  filter: hue-rotate(310deg) saturate(2.2) contrast(1.35);
+}
+.spectrum-radar {
+  filter: grayscale(1) contrast(1.8) brightness(0.75) sepia(1) hue-rotate(85deg);
+}
+.spectrum-night {
+  filter: grayscale(1) contrast(1.15) brightness(0.82) sepia(1) hue-rotate(72deg);
+}
+
+.feed-ken {
+  animation: kenburns 7s var(--ease-out) alternate both;
+  transform-origin: center;
+}
+
+@keyframes kenburns {
+  from {
+    transform: scale(1.06) translate(1.2%, 0);
+  }
+  to {
+    transform: scale(1.16) translate(-1.8%, -1.2%);
+  }
+}

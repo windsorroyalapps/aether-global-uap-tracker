@@ -17,13 +17,20 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { Globe } from "@/components/aether/globe";
-import { analyzeContact, generateBriefing, getAnalysis } from "@/lib/uap/analyze";
-import { classLabel, classTone, coords, formatDuration, formatWhen } from "@/lib/uap/format";
+import { LiveFeed } from "@/components/aether/live-feed";
+import { SpectraStrip } from "@/components/aether/spectra-strip";
+import { analyzeContact, assessUnscoredLive, generateBriefing, getAnalysis } from "@/lib/uap/analyze";
+import { getCrossFix } from "@/lib/uap/crossfix";
+import { loadGlobeTexture, SAT_MODES, SAT_LAYER_META, type SatMode } from "@/lib/uap/globe-tex";
+import { globalUapIndex, primaryInbound, skyLine } from "@/lib/uap/sky";
+import { classLabel, classTone, coords, formatDuration, formatWhen, sensorLabel, sensorShort, uapTone } from "@/lib/uap/format";
+import { SENSOR_META, SENSOR_TYPES, type SensorType } from "@/lib/uap/sensors";
 import { fileReport, listSightings } from "@/lib/uap/queries";
 import { CLASSIFICATIONS, SHAPES, type Classification, type Shape, type Sighting } from "@/lib/uap/types";
 import { cn } from "@/lib/utils";
 
 type Panel = "feed" | "report" | "brief";
+type Klass = Classification | "all" | "live";
 
 export function Console({ initial }: { initial: Sighting[] }) {
   const qc = useQueryClient();
@@ -31,29 +38,79 @@ export function Console({ initial }: { initial: Sighting[] }) {
     queryKey: ["sightings"],
     queryFn: () => listSightings(),
     initialData: initial,
+    refetchInterval: 180_000,
   });
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
-  const [klass, setKlass] = useState<Classification | "all">("all");
+  const [klass, setKlass] = useState<Klass>("all");
+  const [sensor, setSensor] = useState<SensorType | "all">("all");
+  const [hideLowBolides, setHideLowBolides] = useState(true);
   const [panel, setPanel] = useState<Panel>("feed");
   const [pickMode, setPickMode] = useState(false);
   const [pick, setPick] = useState<{ lat: number; lng: number } | null>(null);
+  const [liveContact, setLiveContact] = useState<Sighting | null>(null);
+  const [playedIds, setPlayedIds] = useState<Set<number>>(() => new Set());
+  const [satLayer, setSatLayer] = useState<SatMode>("auto");
+
+  const dayTex = useQuery({
+    queryKey: ["globe-tex", "visible"],
+    queryFn: () => loadGlobeTexture({ data: { layer: "visible" } }),
+    staleTime: 60 * 60_000,
+    enabled: satLayer === "auto" || satLayer === "visible",
+  });
+  const nightTex = useQuery({
+    queryKey: ["globe-tex", "night"],
+    queryFn: () => loadGlobeTexture({ data: { layer: "night" } }),
+    staleTime: 60 * 60_000,
+    enabled: satLayer === "auto" || satLayer === "night",
+  });
+  const irTex = useQuery({
+    queryKey: ["globe-tex", "ir"],
+    queryFn: () => loadGlobeTexture({ data: { layer: "ir" } }),
+    staleTime: 60 * 60_000,
+    enabled: satLayer === "ir",
+  });
+
+  const livePending = (sightings.data ?? []).filter((s) => s.source === "live" && !s.aiScored).length;
+  const liveScore = useQuery({
+    queryKey: ["ai-live", livePending],
+    queryFn: () => assessUnscoredLive(),
+    enabled: livePending > 0,
+    refetchInterval: (q) => {
+      const d = q.state.data;
+      if (d && d.remaining === 0) return false;
+      return 8_000;
+    },
+  });
+
+  useEffect(() => {
+    if (liveScore.data && liveScore.data.scored > 0) {
+      void qc.invalidateQueries({ queryKey: ["sightings"] });
+      void qc.invalidateQueries({ queryKey: ["analysis"] });
+    }
+  }, [liveScore.data, qc]);
 
   const contacts = sightings.data ?? [];
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return contacts.filter((s) => {
-      if (klass !== "all" && s.classification !== klass) return false;
+      if (klass === "live") {
+        if (s.source !== "live") return false;
+      } else if (klass !== "all" && s.classification !== klass) return false;
+      if (sensor !== "all" && s.sensorType !== sensor) return false;
+      if (hideLowBolides && s.source === "live" && s.aiScored && s.uapIndex < 35) return false;
       if (!q) return true;
       return (
         s.locationLabel.toLowerCase().includes(q) ||
         s.region.toLowerCase().includes(q) ||
         s.shape.includes(q) ||
-        s.summary.toLowerCase().includes(q)
+        s.summary.toLowerCase().includes(q) ||
+        s.sensorType.includes(q) ||
+        SENSOR_META[s.sensorType].label.toLowerCase().includes(q)
       );
     });
-  }, [contacts, klass, query]);
+  }, [contacts, hideLowBolides, klass, query, sensor]);
 
   const selected = contacts.find((s) => s.id === selectedId) ?? null;
 
@@ -65,8 +122,27 @@ export function Console({ initial }: { initial: Sighting[] }) {
       contacts.length === 0
         ? 0
         : Math.round(contacts.reduce((a, s) => a + s.confidence, 0) / contacts.length);
-    return { total: contacts.length, anomalous, sensors, regions, avg };
+    const live = contacts.filter((s) => s.source === "live");
+    const live48 = live.filter((s) => Date.parse(s.occurredAt) >= Date.now() - 48 * 3600_000).length;
+    return {
+      total: contacts.length,
+      anomalous,
+      sensors,
+      regions,
+      avg,
+      live: live.length,
+      live48,
+      uap: globalUapIndex(contacts),
+      inbound: primaryInbound(contacts),
+    };
   }, [contacts]);
+
+  const openContact = (id: number) => {
+    setSelectedId(id);
+    setPanel("feed");
+    const next = contacts.find((s) => s.id === id);
+    if (next) setLiveContact(next);
+  };
 
   const onPick = (lat: number, lng: number) => {
     setPick({ lat, lng });
@@ -95,6 +171,9 @@ export function Console({ initial }: { initial: Sighting[] }) {
           <span className="mr-1.5 size-1.5 rounded-full bg-signal pulse-live" />
           Live
         </Badge>
+        {livePending > 0 && (
+          <Badge variant="watch">AI scoring {livePending}</Badge>
+        )}
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button
             variant={panel === "brief" ? "default" : "secondary"}
@@ -123,6 +202,12 @@ export function Console({ initial }: { initial: Sighting[] }) {
         <Stat label="Sensor tracks" value={stats.sensors} />
         <Stat label="Mean confidence" value={`${stats.avg}%`} />
       </section>
+      <section className="grid grid-cols-2 gap-px border-b border-border bg-border sm:grid-cols-4">
+        <Stat label="Live detections" value={stats.live} />
+        <Stat label="Live last 48h" value={stats.live48} />
+        <Stat label="UAP probability index" value={`${stats.uap}/100`} />
+        <Stat label="Primary inbound" value={stats.inbound ?? "—"} />
+      </section>
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <section className="relative min-h-[42vh] flex-1 bg-bg lg:min-h-0">
@@ -138,12 +223,24 @@ export function Console({ initial }: { initial: Sighting[] }) {
             <Globe
               contacts={filtered}
               selectedId={selected?.id ?? null}
-              onSelect={(id) => {
-                setSelectedId(id);
-                setPanel("feed");
-              }}
+              onSelect={openContact}
               pickMode={pickMode}
               onPick={onPick}
+              mode={satLayer}
+              texture={
+                satLayer === "ir"
+                  ? irTex.data && !("error" in irTex.data)
+                    ? irTex.data
+                    : null
+                  : satLayer === "night"
+                    ? nightTex.data && !("error" in nightTex.data)
+                      ? nightTex.data
+                      : null
+                    : dayTex.data && !("error" in dayTex.data)
+                      ? dayTex.data
+                      : null
+              }
+              nightTexture={nightTex.data && !("error" in nightTex.data) ? nightTex.data : null}
             />
           )}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-between p-3 sm:p-4">
@@ -152,6 +249,52 @@ export function Console({ initial }: { initial: Sighting[] }) {
             </p>
             <p className="rounded-md border border-border bg-bg/80 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
               {stats.regions} regions
+            </p>
+          </div>
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 p-3 sm:p-4">
+            <div className="pointer-events-auto flex gap-1 rounded-md border border-border bg-bg/80 p-1">
+              {SAT_MODES.map((layer) => (
+                <button
+                  key={layer}
+                  type="button"
+                  onClick={() => setSatLayer(layer)}
+                  className={cn(
+                    "h-8 rounded-sm px-2.5 font-mono text-[10px] uppercase tracking-[0.12em]",
+                    satLayer === layer ? "bg-raised text-fg" : "text-muted hover:text-fg",
+                  )}
+                >
+                  {SAT_LAYER_META[layer].short}
+                </button>
+              ))}
+            </div>
+            <p className="max-w-[55%] truncate rounded-md border border-border bg-bg/80 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
+              {satLayer === "auto"
+                ? dayTex.isPending || nightTex.isPending
+                  ? "Loading terminator mosaic…"
+                  : "NASA VIIRS · live terminator"
+                : satLayer === "ir"
+                  ? irTex.isPending
+                    ? "Loading NASA mosaic…"
+                    : irTex.data && "error" in irTex.data
+                      ? irTex.data.error
+                      : irTex.data
+                        ? `${irTex.data.source}${irTex.data.acquired ? ` · ${irTex.data.acquired}` : ""}`
+                        : "Satellite offline"
+                  : satLayer === "night"
+                    ? nightTex.isPending
+                      ? "Loading NASA mosaic…"
+                      : nightTex.data && "error" in nightTex.data
+                        ? nightTex.data.error
+                        : nightTex.data
+                          ? `${nightTex.data.source}${nightTex.data.acquired ? ` · ${nightTex.data.acquired}` : ""}`
+                          : "Satellite offline"
+                    : dayTex.isPending
+                      ? "Loading NASA mosaic…"
+                      : dayTex.data && "error" in dayTex.data
+                        ? dayTex.data.error
+                        : dayTex.data
+                          ? `${dayTex.data.source}${dayTex.data.acquired ? ` · ${dayTex.data.acquired}` : ""}`
+                          : "Satellite offline"}
             </p>
           </div>
         </section>
@@ -186,8 +329,16 @@ export function Console({ initial }: { initial: Sighting[] }) {
               setQuery={setQuery}
               klass={klass}
               setKlass={setKlass}
+              sensor={sensor}
+              setSensor={setSensor}
+              hideLowBolides={hideLowBolides}
+              setHideLowBolides={setHideLowBolides}
               selected={selected}
-              onSelect={setSelectedId}
+              onSelect={openContact}
+              autoVisible={selected ? playedIds.has(selected.id) : false}
+              onReplay={() => {
+                if (selected) setLiveContact(selected);
+              }}
             />
           )}
           {panel === "report" && (
@@ -200,12 +351,26 @@ export function Console({ initial }: { initial: Sighting[] }) {
                 setSelectedId(s.id);
                 setPanel("feed");
                 setPick(null);
+                setLiveContact(s);
               }}
             />
           )}
           {panel === "brief" && <BriefingPanel />}
         </aside>
       </div>
+      {liveContact && (
+        <LiveFeed
+          contact={liveContact}
+          onClose={() => setLiveContact(null)}
+          onPlayed={() =>
+            setPlayedIds((prev) => {
+              const next = new Set(prev);
+              next.add(liveContact.id);
+              return next;
+            })
+          }
+        />
+      )}
     </div>
   );
 }
@@ -214,7 +379,7 @@ function Stat({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="bg-bg px-4 py-3 sm:px-5">
       <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">{label}</p>
-      <p className="mt-1 font-display text-xl font-semibold tabular-nums tracking-tight">{value}</p>
+      <p className="mt-1 truncate font-display text-xl font-semibold tabular-nums tracking-tight">{value}</p>
     </div>
   );
 }
@@ -225,16 +390,28 @@ function Feed({
   setQuery,
   klass,
   setKlass,
+  sensor,
+  setSensor,
+  hideLowBolides,
+  setHideLowBolides,
   selected,
   onSelect,
+  autoVisible,
+  onReplay,
 }: {
   filtered: Sighting[];
   query: string;
   setQuery: (v: string) => void;
-  klass: Classification | "all";
-  setKlass: (v: Classification | "all") => void;
+  klass: Klass;
+  setKlass: (v: Klass) => void;
+  sensor: SensorType | "all";
+  setSensor: (v: SensorType | "all") => void;
+  hideLowBolides: boolean;
+  setHideLowBolides: (v: boolean | ((p: boolean) => boolean)) => void;
   selected: Sighting | null;
   onSelect: (id: number) => void;
+  autoVisible: boolean;
+  onReplay: () => void;
 }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -244,7 +421,7 @@ function Feed({
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search region, shape, narrative"
+            placeholder="Search region, shape, sensor, narrative"
             className="pl-9"
           />
         </div>
@@ -252,11 +429,27 @@ function Feed({
           <Chip active={klass === "all"} onClick={() => setKlass("all")}>
             All
           </Chip>
+          <Chip active={klass === "live"} onClick={() => setKlass("live")}>
+            Live
+          </Chip>
           {CLASSIFICATIONS.map((c) => (
             <Chip key={c} active={klass === c} onClick={() => setKlass(c)}>
               {classLabel(c)}
             </Chip>
           ))}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <Chip active={sensor === "all"} onClick={() => setSensor("all")}>
+            All sensors
+          </Chip>
+          {SENSOR_TYPES.map((t) => (
+            <Chip key={t} active={sensor === t} onClick={() => setSensor(t)}>
+              {SENSOR_META[t].short}
+            </Chip>
+          ))}
+          <Chip active={hideLowBolides} onClick={() => setHideLowBolides((v) => !v)}>
+            Floor 35
+          </Chip>
         </div>
       </div>
       <Separator />
@@ -276,16 +469,32 @@ function Feed({
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate text-sm font-medium">{s.locationLabel}</span>
-                <Badge variant={classTone(s.classification)}>{classLabel(s.classification)}</Badge>
+                <div className="flex shrink-0 items-center gap-1">
+                  {s.source === "live" && <Badge variant="live">Live</Badge>}
+                  <Badge variant={classTone(s.classification)}>{classLabel(s.classification)}</Badge>
+                </div>
               </div>
               <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
-                {s.region} · {s.shape} · {formatWhen(s.occurredAt)}
+                {sensorShort(s.sensorType)} · {s.region} · {s.shape} · {formatWhen(s.occurredAt)}
               </p>
+              {s.originLabel && (
+                <p className="truncate font-mono text-[10px] tracking-[0.08em] text-subtle">
+                  Inbound {s.originLabel} · UAP {s.uapIndex}/100
+                  {s.aiScored ? " · AI" : s.correlated ? " · corr" : s.source === "live" ? " · pending" : ""}
+                </p>
+              )}
             </button>
           ))
         )}
       </div>
-      {selected && <Detail key={selected.id} contact={selected} />}
+      {selected && (
+        <Detail
+          key={selected.id}
+          contact={selected}
+          autoVisible={autoVisible}
+          onReplay={onReplay}
+        />
+      )}
     </div>
   );
 }
@@ -313,10 +522,24 @@ function Chip({
   );
 }
 
-function Detail({ contact }: { contact: Sighting }) {
+function Detail({
+  contact,
+  autoVisible,
+  onReplay,
+}: {
+  contact: Sighting;
+  autoVisible: boolean;
+  onReplay: () => void;
+}) {
+  const qc = useQueryClient();
   const analysis = useQuery({
     queryKey: ["analysis", contact.id],
     queryFn: () => getAnalysis({ data: { id: contact.id } }),
+  });
+  const cross = useQuery({
+    queryKey: ["crossfix", contact.id],
+    queryFn: () => getCrossFix({ data: { id: contact.id } }),
+    enabled: contact.source === "live",
   });
   const run = useMutation({
     mutationFn: () => analyzeContact({ data: { id: contact.id } }),
@@ -326,12 +549,15 @@ function Detail({ contact }: { contact: Sighting }) {
         return;
       }
       void analysis.refetch();
+      void qc.invalidateQueries({ queryKey: ["sightings"] });
     },
     onError: () => toast.error("Assessment failed."),
   });
 
   const result = analysis.data;
   const pending = run.isPending;
+  const autoScoring = contact.source === "live" && !contact.aiScored && !result;
+  const awaitingCorr = autoScoring && !contact.correlated;
 
   return (
     <div className="border-t border-border bg-bg p-4">
@@ -344,16 +570,95 @@ function Detail({ contact }: { contact: Sighting }) {
         </div>
         <Badge variant="solid">{contact.confidence}% conf</Badge>
       </div>
+      <div className="mt-3 rounded-lg border border-border bg-surface p-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">
+            UAP probability index
+            {contact.aiScored
+              ? " · AI"
+              : contact.source === "live"
+                ? contact.correlated
+                  ? " · pending AI"
+                  : " · awaiting correlation"
+                : ""}
+          </p>
+          <Badge variant={uapTone(contact.uapIndex)}>{contact.uapIndex}/100</Badge>
+        </div>
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-raised">
+          <div
+            className="h-full bg-accent transition-[width] duration-300 ease-out"
+            style={{ width: `${Math.min(100, contact.uapIndex)}%` }}
+          />
+        </div>
+        <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.16em] text-muted">
+          Inbound sky direction
+        </p>
+        <p className="mt-1 text-sm text-fg">{contact.originLabel ?? "Unknown"}</p>
+        <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.16em] text-muted">
+          Detection sensor
+        </p>
+        <p className="mt-1 text-sm text-fg">{sensorLabel(contact.sensorType)}</p>
+        <p className="mt-1 font-mono text-[10px] tracking-[0.08em] text-subtle">
+          {SENSOR_META[contact.sensorType].hint}
+        </p>
+        {cross.data && (
+          <div className="mt-3 border-t border-border pt-3">
+            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">
+              Multi-static cross-fix
+              {cross.data.correlated ? " · final" : " · pending"}
+            </p>
+            <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.1em] text-fg">
+              {cross.data.eoFix ? "EO lock" : "EO gap"} · {cross.data.irFix ? "IR lock" : "IR none"} ·{" "}
+              {cross.data.radarFix ? "radar kinematics" : "radar gap"}
+            </p>
+            {cross.data.latErrDeg != null && (
+              <p className="mt-1 font-mono text-[10px] tracking-[0.08em] text-subtle">
+                ±{cross.data.latErrDeg.toFixed(2)}° lat · ±{(cross.data.lngErrDeg ?? 0).toFixed(2)}° lng · ±
+                {cross.data.timeErrSec ?? 0}s
+              </p>
+            )}
+            <p className="mt-1 text-sm text-muted">
+              {cross.data.weatherNote ?? "Weather dump pending"}
+              {cross.data.cloudCover != null ? ` · cloud ${cross.data.cloudCover}%` : ""}
+            </p>
+            {cross.data.metar && (
+              <p className="mt-1 font-mono text-[10px] tracking-[0.06em] text-subtle">{cross.data.metar}</p>
+            )}
+            {cross.data.notamNote && (
+              <p className="mt-1 text-sm text-muted">{cross.data.notamNote}</p>
+            )}
+            <p className="mt-1 font-mono text-[10px] tracking-[0.08em] text-subtle">
+              {cross.data.spaceFence}
+              {cross.data.latencySec != null
+                ? ` · dump lag ${Math.round(cross.data.latencySec / 60)} min`
+                : ""}
+            </p>
+          </div>
+        )}
+      </div>
       <p className="mt-3 text-sm leading-relaxed text-muted">{contact.summary}</p>
-      <div className="mt-4">
+      <div className="mt-4 space-y-3">
+        <SpectraStrip contact={contact} autoVisible={autoVisible} />
+        <Button variant="secondary" className="w-full" onClick={onReplay}>
+          Replay area feed
+        </Button>
         {result ? (
           <div className="rounded-lg border border-border bg-surface p-3">
             <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">
               AI assessment · {result.threat}
+              {result.uapProbability != null ? ` · ${result.uapProbability}/100` : ""}
             </p>
             <p className="mt-1 text-sm text-fg">{result.likelyOrigin}</p>
             <p className="mt-2 text-sm leading-relaxed text-muted">{result.assessment}</p>
           </div>
+        ) : awaitingCorr ? (
+          <p className="rounded-lg border border-border bg-surface px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
+            Holding UAP index until EO/IR/radar + weather/NOTAM dump…
+          </p>
+        ) : autoScoring ? (
+          <p className="rounded-lg border border-border bg-surface px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
+            AI scoring this live detection…
+          </p>
         ) : (
           <Button
             variant="secondary"
@@ -386,6 +691,7 @@ function ReportForm({
   const [locationLabel, setLocationLabel] = useState("");
   const [region, setRegion] = useState("Unspecified");
   const [shape, setShape] = useState<Shape>("unknown");
+  const [sensorType, setSensorType] = useState<SensorType>("optical");
   const [duration, setDuration] = useState("");
   const [summary, setSummary] = useState("");
   const [callsign, setCallsign] = useState("");
@@ -410,6 +716,7 @@ function ReportForm({
           durationSec: duration ? Number(duration) : null,
           summary,
           callsign,
+          sensorType,
         },
       }),
     onSuccess: (s) => {
@@ -469,6 +776,19 @@ function ReportForm({
             {SHAPES.map((s) => (
               <option key={s} value={s}>
                 {s}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Sensor">
+          <select
+            value={sensorType}
+            onChange={(e) => setSensorType(e.target.value as SensorType)}
+            className="flex h-11 w-full rounded-md border border-border bg-bg px-3 text-sm text-fg"
+          >
+            {SENSOR_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {SENSOR_META[t].label}
               </option>
             ))}
           </select>
